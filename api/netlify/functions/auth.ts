@@ -71,7 +71,9 @@ export const handler: Handler = async (event) => {
   try {
     // ==================== SIGNUP ====================
     if (action === "signup") {
-      const { email, password, firstName, lastName, role = "patient" } = body;
+      const { email, password, firstName, lastName } = body;
+      // Role is always "patient" for public signup — provider accounts require a separate invite flow
+      const role = "patient";
 
       if (!email || !password || !firstName || !lastName) {
         return cors.response(400, {
@@ -203,9 +205,14 @@ export const handler: Handler = async (event) => {
         });
       }
 
-      // Universal demo account -- always works regardless of DB state
-      if (email.trim().toLowerCase() === "demo@demo.com" && password === "demo") {
-        const demoRole = role || "patient";
+      // Demo account -- only active when DEMO_MODE_ENABLED=true in the environment.
+      // NEVER enable in production. The role is fixed to "patient" regardless of request body.
+      if (
+        process.env.DEMO_MODE_ENABLED === "true" &&
+        email.trim().toLowerCase() === "demo@demo.com" &&
+        password === "demo"
+      ) {
+        const demoRole = "patient"; // Fixed — never allow caller to self-assign a role
         const demoUserId = `demo-${demoRole}-001`;
         const demoToken = generateToken();
         const demoTokenHash = hashToken(demoToken);

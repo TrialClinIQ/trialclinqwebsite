@@ -4,6 +4,7 @@ exports.handler = void 0;
 const db_1 = require("./db");
 const csrf_utils_1 = require("./csrf-utils");
 const cors_utils_1 = require("./cors-utils");
+const auth_utils_1 = require("./auth-utils");
 const handler = async (event, context) => {
     const cors = (0, cors_utils_1.createCorsHandler)(event);
     console.log("=== Express Interest Request ===");
@@ -37,12 +38,19 @@ const handler = async (event, context) => {
         catch (err) {
             console.warn("Database init warning:", err instanceof Error ? err.message : String(err));
         }
-        // Get auth from headers
-        const userId = event.headers["x-user-id"];
+        // Get auth from verified session
+        let userId;
+        try {
+            const authUser = await (0, auth_utils_1.verifyTokenAndGetUser)(event);
+            userId = authUser.userId;
+        }
+        catch {
+            return cors.response(401, { ok: false, message: "Unauthorized" });
+        }
         const patientId = event.headers["x-patient-id"];
         console.log("Auth check - userId:", !!userId, "patientId:", !!patientId);
-        if (!userId || !patientId) {
-            return cors.response(401, { ok: false, message: "Missing x-user-id or x-patient-id header" });
+        if (!patientId) {
+            return cors.response(401, { ok: false, message: "Missing x-patient-id header" });
         }
         // Parse request body
         let nctId = "";

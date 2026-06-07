@@ -2,6 +2,7 @@ import type { Handler } from "@netlify/functions";
 import { query, logAuditEvent } from "./db";
 import { createCorsHandler } from "./cors-utils";
 import { validateCsrfToken, getCsrfTokenFromHeaders } from "./csrf-utils";
+import { verifyTokenAndGetUser } from "./auth-utils";
 import crypto from "crypto";
 
 function generateMessageId(): string {
@@ -35,11 +36,16 @@ export const handler: Handler = async (event) => {
     return cors.handleOptions("GET,POST,PUT,OPTIONS");
   }
 
-  const userId = event.headers["x-user-id"];
-
-  if (!userId) {
-    return cors.response(401, { ok: false, error: "Missing x-user-id header" });
+  let authUser;
+  try {
+    authUser = await verifyTokenAndGetUser(event);
+  } catch {
+    return cors.response(401, { ok: false, error: "Unauthorized" });
   }
+  if (!authUser) {
+    return cors.response(401, { ok: false, error: "Unauthorized" });
+  }
+  const userId = authUser.userId;
 
   try {
     // GET - Fetch messages

@@ -10,8 +10,11 @@ const crypto_1 = require("crypto");
 const TOKEN_BYTE_LENGTH = 32; // 256 bits
 const TOKEN_EXPIRY_MS = 3600000; // 1 hour
 const HMAC_ALGORITHM = "sha256";
-// Secret key for HMAC signing - should be set in environment variables
-const CSRF_SECRET = process.env.CSRF_SECRET || "default-csrf-secret-change-in-production";
+// Secret key for HMAC signing - must be set in environment variables
+const CSRF_SECRET = process.env.CSRF_SECRET;
+if (!CSRF_SECRET) {
+    throw new Error("CSRF_SECRET environment variable is required and must not be empty");
+}
 /**
  * Generate a cryptographically secure CSRF token
  * Format: base64(randomBytes).timestamp.signature

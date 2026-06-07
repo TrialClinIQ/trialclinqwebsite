@@ -1,10 +1,9 @@
 import type { Handler } from "@netlify/functions";
 import Busboy from "busboy";
 import pdf from "pdf-parse";
+import { VertexAI } from "@google-cloud/vertexai";
 import { createCorsHandler } from "./cors-utils";
 
-const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const DEFAULT_MODEL = "gpt-4o"; // Use gpt-4o for better structured output and JSON handling
 const MAX_TEXT_CHARS = 120000;
 const SUPPORTED_MIME = new Set(["application/pdf"]);
 const SUPPORTED_EXT = new Set([".pdf"]);
@@ -172,11 +171,6 @@ export const handler: Handler = async (event) => {
     return cors.response(405, { error: "Method not allowed" });
   }
 
-  const key = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY || "";
-  if (!key) {
-    return cors.response(500, { error: "OPENAI_API_KEY not set" });
-  }
-
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   if (!authHeader) {
     return cors.response(401, { error: "Missing Authorization header" });
@@ -211,8 +205,16 @@ export const handler: Handler = async (event) => {
     console.log(`[summarize] Processing file: ${file.filename} (${file.mimeType}, ${Buffer.byteLength(file.data)} bytes)`);
     console.log(`[summarize] Extracted text length: ${trimmed.length} chars`);
 
-    const model = process.env.OPENAI_SUMMARIZE_MODEL || DEFAULT_MODEL;
-    const prompt = [
+    const vertexAI = new VertexAI({
+      project: process.env.GOOGLE_CLOUD_PROJECT || "trialcliniq",
+      location: process.env.VERTEX_AI_LOCATION || "us-central1",
+    });
+
+    const generativeModel = vertexAI.getGenerativeModel({
+      model: process.env.VERTEX_AI_MODEL || "gemini-1.5-pro",
+    });
+
+    const systemInstruction = [
       "You are a medical document analyzer. Your task is to extract and summarize clinical information from the provided document.",
       "If the document is NOT a medical/clinical document or is unreadable/garbled, respond with: {\"summaryMarkdown\": \"Unable to extract readable text from document\", \"summaryPlain\": \"Unable to summarize this document\", \"eligibility\": {\"overall\": \"Unknown\", \"criteria\": [], \"missing\": []}}",
       "For MEDICAL documents only:",
@@ -224,46 +226,34 @@ export const handler: Handler = async (event) => {
       "Use ONLY the text between DOCUMENT START and DOCUMENT END.",
     ].join(" ");
 
-    const res = await fetch(OPENAI_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: prompt },
-          { role: "user", content: `DOCUMENT START\n${trimmed}\nDOCUMENT END` },
-        ],
-        response_format: { type: "json_object" },
-      }),
-    });
+    const prompt = `${systemInstruction}\n\nDOCUMENT START\n${trimmed}\nDOCUMENT END`;
 
-    if (!res.ok) {
-      const textErr = await res.text().catch(() => "");
-      const errorMsg = textErr || `HTTP ${res.status}`;
-      // Log detailed error for debugging
-      console.error(`[summarize] OpenAI API error (${res.status}):`, errorMsg);
-      return cors.response(res.status, { error: errorMsg, detail: "OpenAI API request failed. Check API key validity." });
+    let content: string;
+    try {
+      const result = await generativeModel.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      });
+      content = result.response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    } catch (apiErr: any) {
+      console.error(`[summarize] Vertex AI API error:`, apiErr);
+      return cors.response(500, { error: String(apiErr?.message || apiErr), detail: "Vertex AI API request failed." });
     }
-
-    const data = await res.json();
-    const content: string | undefined = data?.choices?.[0]?.message?.content;
 
     if (!content) {
-      console.error("[summarize] OpenAI returned no content");
-      return cors.response(500, { error: "OpenAI returned empty response" });
+      console.error("[summarize] Vertex AI returned no content");
+      return cors.response(500, { error: "Vertex AI returned empty response" });
     }
+
+    // Strip markdown code fences if present
+    const jsonText = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
     let out: any = {};
     try {
-      out = JSON.parse(content);
-      console.log(`[summarize] Successfully parsed OpenAI response`);
+      out = JSON.parse(jsonText);
+      console.log(`[summarize] Successfully parsed Vertex AI response`);
     } catch (parseErr) {
-      console.error(`[summarize] Failed to parse OpenAI JSON response:`, content.substring(0, 500));
-      return cors.response(500, { error: "Invalid JSON response from OpenAI", detail: "Could not parse AI response" });
+      console.error(`[summarize] Failed to parse Vertex AI JSON response:`, content.substring(0, 500));
+      return cors.response(500, { error: "Invalid JSON response from Vertex AI", detail: "Could not parse AI response" });
     }
 
     // Validate required fields
@@ -275,7 +265,7 @@ export const handler: Handler = async (event) => {
       summaryMarkdown: out.summaryMarkdown || out.summary || "",
       summaryPlain: out.summaryPlain || "",
       eligibility: out.eligibility || { overall: "Unknown", criteria: [], missing: [] },
-      audit: { requestId: data?.id || "unknown", generatedAt: new Date().toISOString(), profileId, uploadId, fileName: file.filename },
+      audit: { generatedAt: new Date().toISOString(), profileId, uploadId, fileName: file.filename },
     });
   } catch (e: any) {
     return cors.response(500, { error: String(e?.message || e || "Unknown error") });

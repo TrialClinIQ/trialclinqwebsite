@@ -1,31 +1,26 @@
 /**
- * Authentication Utilities for Azure Entra ID (formerly Azure AD)
+ * Authentication Utilities for Firebase Auth
  *
- * This module provides secure JWT token verification for Azure Entra ID tokens.
+ * This module provides secure Firebase ID token verification for API functions.
  *
  * SECURITY FEATURES:
- * - JWT signature verification using RS256 algorithm
- * - JWKS (JSON Web Key Set) fetching from Azure AD with caching
- * - Token expiration validation
- * - Issuer validation (Azure AD tenant)
- * - Audience validation (Azure AD client ID)
- * - Rate limiting on JWKS requests
+ * - Firebase ID token verification via Firebase Admin SDK
+ * - Token expiration validation handled by the SDK
+ * - Session token fallback (SHA-256 hash stored in sessions table)
  *
- * ENVIRONMENT VARIABLES REQUIRED:
- * - VITE_AZURE_TENANT_ID or AZURE_TENANT_ID: Your Azure tenant ID
- * - VITE_AZURE_CLIENT_ID or AZURE_CLIENT_ID: Your Azure application client ID (optional, for audience validation)
+ * ENVIRONMENT VARIABLES:
+ * - GOOGLE_APPLICATION_CREDENTIALS: path to service account JSON (local dev)
+ *   On GCP/Cloud Run/Netlify with Workload Identity this is not required.
  *
  * USAGE:
  * ```typescript
- * const user = await verifyAndDecodeToken(authHeader);
- * // user contains verified information from the JWT token
+ * const user = await verifyTokenAndGetUser(event);
  * ```
  *
  * @module auth-utils
  */
 
-import jwt from 'jsonwebtoken';
-import jwksClient from 'jwks-rsa';
+import * as admin from 'firebase-admin';
 import crypto from 'crypto';
 import { query } from './db';
 
@@ -36,51 +31,31 @@ export interface AuthenticatedUser {
   lastName?: string;
   role: 'patient' | 'provider' | 'researcher';
   tenantId: string;
-  oid: string; // Object ID from Azure
+  oid: string; // kept for interface compatibility; maps to Firebase uid
 }
 
-// JWKS client with caching
-let jwksClientInstance: jwksClient.JwksClient | null = null;
-
-/**
- * Get or create JWKS client with caching
- */
-function getJwksClient(): jwksClient.JwksClient {
-  if (!jwksClientInstance) {
-    const tenantId = process.env.VITE_AZURE_TENANT_ID || process.env.AZURE_TENANT_ID;
-
-    if (!tenantId) {
-      throw new Error('Azure tenant ID not configured');
-    }
-
-    jwksClientInstance = jwksClient({
-      jwksUri: `https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`,
-      cache: true,
-      cacheMaxAge: 3600000, // Cache for 1 hour
-      rateLimit: true,
-      jwksRequestsPerMinute: 10,
-    });
+// Initialize Firebase Admin (idempotent)
+function getAdminApp(): admin.app.App {
+  if (admin.apps.length > 0) {
+    return admin.apps[0]!;
   }
-
-  return jwksClientInstance;
+  return admin.initializeApp();
 }
 
 /**
- * Get signing key for JWT verification
+ * Verify a Firebase ID token and return the decoded claims.
  */
-async function getSigningKey(kid: string): Promise<string> {
+async function verifyFirebaseToken(token: string): Promise<admin.auth.DecodedIdToken> {
+  const app = getAdminApp();
   try {
-    const client = getJwksClient();
-    const key = await client.getSigningKey(kid);
-    return key.getPublicKey();
-  } catch (error) {
-    console.error('Failed to get signing key:', error);
-    throw new Error('Failed to validate token signature');
+    return await app.auth().verifyIdToken(token);
+  } catch (error: any) {
+    throw new Error(`Failed to verify Firebase token: ${error.message}`);
   }
 }
 
 /**
- * Verify and decode Azure Entra ID token with proper signature verification
+ * Verify and decode a Firebase ID token from a Bearer Authorization header.
  */
 export async function verifyAndDecodeToken(authHeader: string): Promise<AuthenticatedUser> {
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -90,62 +65,19 @@ export async function verifyAndDecodeToken(authHeader: string): Promise<Authenti
   const token = authHeader.substring(7);
 
   try {
-    // Get tenant ID and client ID from environment
-    const tenantId = process.env.VITE_AZURE_TENANT_ID || process.env.AZURE_TENANT_ID;
-    const clientId = process.env.VITE_AZURE_CLIENT_ID || process.env.AZURE_CLIENT_ID;
+    const decoded = await verifyFirebaseToken(token);
 
-    if (!tenantId) {
-      throw new Error('Azure tenant ID not configured');
-    }
+    const displayName: string = (decoded as any).name || '';
+    const parts = displayName.split(' ');
 
-    // Decode token header to get the key ID (kid)
-    const decodedHeader = jwt.decode(token, { complete: true });
-
-    if (!decodedHeader || typeof decodedHeader === 'string') {
-      throw new Error('Invalid token format');
-    }
-
-    const { kid } = decodedHeader.header;
-
-    if (!kid) {
-      throw new Error('Token missing key ID (kid)');
-    }
-
-    // Get the signing key
-    const signingKey = await getSigningKey(kid);
-
-    // Verify token signature and validate claims
-    const verifyOptions: jwt.VerifyOptions = {
-      algorithms: ['RS256'],
-      issuer: [
-        `https://login.microsoftonline.com/${tenantId}/v2.0`,
-        `https://sts.windows.net/${tenantId}/`,
-      ],
-    };
-
-    // Add audience validation if client ID is configured
-    if (clientId) {
-      verifyOptions.audience = clientId;
-    }
-
-    // Verify the token
-    const decoded = jwt.verify(token, signingKey, verifyOptions) as any;
-
-    // Validate expiration (jwt.verify already does this, but we check explicitly)
-    const now = Math.floor(Date.now() / 1000);
-    if (decoded.exp && decoded.exp < now) {
-      throw new Error('Token has expired');
-    }
-
-    // Extract user information
     const user: AuthenticatedUser = {
-      userId: decoded.oid || decoded.sub || decoded.unique_name || '',
-      email: decoded.email || decoded.unique_name || decoded.upn || decoded.preferred_username || '',
-      firstName: decoded.given_name || '',
-      lastName: decoded.family_name || '',
-      role: decoded.role || decoded.roles?.[0] || 'patient',
-      tenantId: decoded.tid || tenantId || '',
-      oid: decoded.oid || '',
+      userId: decoded.uid,
+      email: decoded.email || '',
+      firstName: parts[0] || (decoded as any).given_name || '',
+      lastName: parts.slice(1).join(' ') || (decoded as any).family_name || '',
+      role: ((decoded as any).role as AuthenticatedUser['role']) || 'patient',
+      tenantId: decoded.firebase?.tenant || '',
+      oid: decoded.uid,
     };
 
     if (!user.userId || !user.email) {
@@ -155,16 +87,6 @@ export async function verifyAndDecodeToken(authHeader: string): Promise<Authenti
     return user;
   } catch (error: any) {
     console.error('Token verification failed:', error);
-
-    // Provide more specific error messages
-    if (error.name === 'TokenExpiredError') {
-      throw new Error('Unauthorized: Token has expired');
-    } else if (error.name === 'JsonWebTokenError') {
-      throw new Error(`Unauthorized: Invalid token - ${error.message}`);
-    } else if (error.name === 'NotBeforeError') {
-      throw new Error('Unauthorized: Token not yet valid');
-    }
-
     throw new Error(`Unauthorized: ${error.message}`);
   }
 }
@@ -202,23 +124,23 @@ async function verifySessionToken(token: string): Promise<AuthenticatedUser> {
 
 /**
  * Extract user info from Authorization header or session cookie.
- * Supports both Azure Entra ID JWTs and simpleAuth session tokens.
+ * Supports both Firebase ID tokens (JWTs) and simpleAuth session tokens.
  */
 export async function getUserFromAuthHeader(authHeader?: string, cookieHeader?: string): Promise<AuthenticatedUser> {
-  // Try Bearer token first (could be Azure JWT or simpleAuth token)
+  // Try Bearer token first
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.substring(7);
 
-    // If it looks like a JWT (has dots), try Azure verification
+    // Firebase ID tokens are JWTs (contain dots); try Firebase verification first
     if (token.includes('.')) {
       try {
         return await verifyAndDecodeToken(authHeader);
       } catch {
-        // not a valid Azure JWT, fall through
+        // Not a valid Firebase JWT — fall through to session token check
       }
     }
 
-    // Otherwise treat it as a simpleAuth session token
+    // Treat as a simpleAuth session token
     try {
       return await verifySessionToken(token);
     } catch {
@@ -238,20 +160,15 @@ export async function getUserFromAuthHeader(authHeader?: string, cookieHeader?: 
 }
 
 /**
- * Check if user has permission to access a specific patient/patient's data
+ * Check if user has permission to access a specific patient's data
  */
 export function canAccessPatient(
   authenticatedUser: AuthenticatedUser,
   targetPatientId: string
 ): boolean {
-  // Patients can only access their own data
   if (authenticatedUser.role === 'patient') {
     return authenticatedUser.userId === targetPatientId;
   }
-
-  // Researchers/Providers can access data they're authorized for
-  // TODO: Implement role-based access control (RBAC)
-  // This would check a permissions table or Azure AD groups
   return true;
 }
 
@@ -266,24 +183,21 @@ export function isResearcherOwner(
 }
 
 /**
- * Generate internal user ID for database
- * Uses Azure OID (Object ID) for consistency across systems
+ * Generate internal user ID for database (kept for backward compatibility)
  */
-export function generateInternalUserId(azureOid: string): string {
-  return `azure-${azureOid}`;
+export function generateInternalUserId(uid: string): string {
+  return `firebase-${uid}`;
 }
 
 /**
- * Verify token and get user from event or auth header string
- * Accepts either a HandlerEvent object or an auth header string for backward compatibility
+ * Verify token and get user from event or auth header string.
+ * Accepts either a HandlerEvent object or an auth header string for backward compatibility.
  */
 export async function verifyTokenAndGetUser(eventOrAuthHeader: any): Promise<AuthenticatedUser> {
-  // If it's a string, treat it as an auth header
   if (typeof eventOrAuthHeader === 'string') {
     return getUserFromAuthHeader(eventOrAuthHeader);
   }
 
-  // If it's an event object, extract auth header and cookies
   const authHeader = eventOrAuthHeader?.headers?.authorization ||
                      eventOrAuthHeader?.headers?.Authorization || '';
   const cookieHeader = eventOrAuthHeader?.headers?.cookie || '';

@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
 const db_1 = require("./db");
 const cors_utils_1 = require("./cors-utils");
+const auth_utils_1 = require("./auth-utils");
 const handler = async (event) => {
     const cors = (0, cors_utils_1.createCorsHandler)(event);
     if (event.httpMethod === "OPTIONS") {
@@ -11,10 +12,15 @@ const handler = async (event) => {
     if (event.httpMethod !== "GET") {
         return cors.response(405, { error: "Method not allowed" });
     }
-    const userId = event.headers["x-user-id"];
-    const providerId = event.headers["x-provider-id"] || userId;
-    if (!userId) {
-        return cors.response(401, { ok: false, error: "Missing x-user-id header" });
+    let userId;
+    let providerId;
+    try {
+        const authUser = await (0, auth_utils_1.verifyTokenAndGetUser)(event);
+        userId = authUser.userId;
+        providerId = authUser.userId;
+    }
+    catch (authErr) {
+        return cors.response(401, { ok: false, error: "Unauthorized" });
     }
     try {
         const { type = "summary", startDate, endDate, nctId } = event.queryStringParameters || {};

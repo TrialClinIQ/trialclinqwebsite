@@ -10,12 +10,29 @@
  * - ELATION_CLIENT_ID
  * - ELATION_CLIENT_SECRET
  * - ELATION_API_BASE_URL (default: https://api.elationhealth.com/api/2.0)
+ * - GOOGLE_CLOUD_PROJECT (default: trialcliniq)
+ * - VERTEX_AI_LOCATION (default: us-central1)
+ * - VERTEX_AI_MODEL (default: gemini-1.5-pro)
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+const { VertexAI } = require("@google-cloud/vertexai");
+function getElationGenerativeModel() {
+    const vertexAI = new VertexAI({
+        project: process.env.GOOGLE_CLOUD_PROJECT || "trialcliniq",
+        location: process.env.VERTEX_AI_LOCATION || "us-central1",
+    });
+    return vertexAI.getGenerativeModel({
+        model: process.env.VERTEX_AI_MODEL || "gemini-1.5-pro",
+    });
+}
+function stripElationJsonFences(text) {
+    return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+}
 exports.handler = void 0;
 const db_1 = require("./db");
 const cors_utils_1 = require("./cors-utils");
 const csrf_utils_1 = require("./csrf-utils");
+const auth_utils_1 = require("./auth-utils");
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -183,10 +200,15 @@ const handler = async (event) => {
     catch (err) {
         console.error("Failed to ensure Elation tables:", err);
     }
-    const userId = event.headers["x-user-id"];
-    const providerId = event.headers["x-provider-id"] || userId;
-    if (!userId) {
-        return cors.response(401, { ok: false, error: "Missing x-user-id header" });
+    let userId;
+    let providerId;
+    try {
+        const authUser = await (0, auth_utils_1.verifyTokenAndGetUser)(event);
+        userId = authUser.userId;
+        providerId = authUser.userId;
+    }
+    catch (authErr) {
+        return cors.response(401, { ok: false, error: "Unauthorized" });
     }
     try {
         // ========================================================================
@@ -519,12 +541,10 @@ const handler = async (event) => {
                 }
                 // Get all synced patients
                 const patientsResult = await (0, db_1.query)(`SELECT * FROM elation_patients WHERE provider_id = $1`, [providerId]);
-                const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-                const hasOpenAIKey = !!OPENAI_API_KEY;
                 let matchCount = 0;
                 const matchResults = [];
                 const commonCriteria = {};
-                const aiAnalysisUsed = hasOpenAIKey && useAI;
+                const aiAnalysisUsed = useAI;
                 // Build trial context for AI
                 const trialContext = {
                     nctId,
@@ -541,7 +561,7 @@ const handler = async (event) => {
                     phase: phase || "Not specified",
                 };
                 // =====================================================================
-                // AI-POWERED MATCHING WITH OPENAI GPT-4
+                // AI-POWERED MATCHING WITH VERTEX AI GEMINI
                 // =====================================================================
                 async function analyzePatientWithAI(patient, trialCtx) {
                     const age = patient.dob
@@ -648,35 +668,17 @@ CRITICAL INSTRUCTIONS:
 
 Analyze the patient's eligibility comprehensively. Check each inclusion criterion and exclusion criterion. Consider the COMPLETE medical history, ALL current medications, ALL allergies, and vital signs. Return your assessment as JSON with eligibilityScore being the calculated SUM.`;
                     try {
-                        const response = await fetch("https://api.openai.com/v1/chat/completions", {
-                            method: "POST",
-                            headers: {
-                                "Content-Type": "application/json",
-                                "Authorization": `Bearer ${OPENAI_API_KEY}`,
-                            },
-                            body: JSON.stringify({
-                                model: "gpt-4o",
-                                temperature: 0.1,
-                                max_tokens: 2000,
-                                messages: [
-                                    { role: "system", content: systemPrompt },
-                                    { role: "user", content: userPrompt },
-                                ],
-                                response_format: { type: "json_object" },
-                            }),
+                        const combinedPrompt = `${systemPrompt}\n\n${userPrompt}`;
+                        const model = getElationGenerativeModel();
+                        const result = await model.generateContent({
+                            contents: [{ role: "user", parts: [{ text: combinedPrompt }] }],
                         });
-                        if (!response.ok) {
-                            const errorText = await response.text();
-                            console.error(`OpenAI API error for patient ${patient.elation_patient_id}:`, errorText);
-                            return null;
-                        }
-                        const data = await response.json();
-                        const content = data?.choices?.[0]?.message?.content;
+                        const content = result.response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
                         if (!content) {
-                            console.error(`No content from OpenAI for patient ${patient.elation_patient_id}`);
+                            console.error(`No content from Vertex AI for patient ${patient.elation_patient_id}`);
                             return null;
                         }
-                        const aiResult = JSON.parse(content);
+                        const aiResult = JSON.parse(stripElationJsonFences(content));
                         return {
                             patientId: patient.elation_patient_id,
                             firstName: patient.first_name,
@@ -953,7 +955,7 @@ Analyze the patient's eligibility comprehensively. Check each inclusion criterio
                             if (aiResult) {
                                 // Mark as actual AI result
                                 aiResult._aiActuallyUsed = true;
-                                aiResult._scoringMethod = 'gpt-4o';
+                                aiResult._scoringMethod = 'gemini-1.5-pro';
                                 return aiResult;
                             }
                             // AI was supposed to be used but failed - flag this clearly
@@ -965,7 +967,7 @@ Analyze the patient's eligibility comprehensively. Check each inclusion criterio
                             fallbackResult._aiActuallyUsed = false;
                             fallbackResult._scoringMethod = 'rule-based-fallback';
                             fallbackResult._warning = aiAnalysisUsed
-                                ? 'AI_FAILED: GPT call failed, score is rule-based fallback - DO NOT TRUST AS AI RESULT'
+                                ? 'AI_FAILED: Gemini call failed, score is rule-based fallback - DO NOT TRUST AS AI RESULT'
                                 : 'NO_AI: AI not configured, using rule-based scoring';
                         }
                         return fallbackResult;
@@ -984,7 +986,7 @@ Analyze the patient's eligibility comprehensively. Check each inclusion criterio
                         }
                         // CRITICAL: Track actual AI usage, not just intent
                         const actuallyUsedAI = result._aiActuallyUsed === true;
-                        const scoringMethod = result._scoringMethod || (actuallyUsedAI ? 'gpt-4o' : 'rule-based-fallback');
+                        const scoringMethod = result._scoringMethod || (actuallyUsedAI ? 'gemini-1.5-pro' : 'rule-based-fallback');
                         const warning = result._warning || null;
                         // Store in database with clear AI usage flags
                         await (0, db_1.query)(`INSERT INTO elation_trial_matches (
@@ -1024,7 +1026,7 @@ Analyze the patient's eligibility comprehensively. Check each inclusion criterio
                             reasoning: result.reasoning,
                             // DEVELOPMENT FLAGS - clearly show what actually happened
                             aiPowered: actuallyUsedAI, // TRUE = GPT actually returned a result, FALSE = fallback used
-                            scoringMethod, // 'gpt-4o' | 'rule-based-fallback'
+                            scoringMethod, // 'gemini-1.5-pro' | 'rule-based-fallback'
                             _devWarning: warning, // null if AI worked, error message if fallback
                             _aiIntended: aiAnalysisUsed, // Was AI supposed to be used?
                             _aiSucceeded: actuallyUsedAI, // Did AI actually succeed?
@@ -1047,7 +1049,7 @@ Analyze the patient's eligibility comprehensively. Check each inclusion criterio
                     matchCount,
                     nctId,
                     useAI: aiAnalysisUsed,
-                    aiModel: aiAnalysisUsed ? "gpt-4o" : "rule-based",
+                    aiModel: aiAnalysisUsed ? "gemini-1.5-pro" : "rule-based",
                     // ============================================================
                     // DEVELOPMENT FLAGS - CHECK THESE TO VERIFY AI IS WORKING
                     // ============================================================
@@ -1056,11 +1058,10 @@ Analyze the patient's eligibility comprehensively. Check each inclusion criterio
                         aiSuccessCount,
                         aiFallbackCount,
                         aiSuccessRate: `${aiSuccessRate}%`,
-                        openAIKeyConfigured: !!OPENAI_API_KEY,
                         WARNING: aiFallbackCount > 0
                             ? `⚠️ ${aiFallbackCount} patients used FALLBACK scoring - AI failed or not configured!`
                             : aiAnalysisUsed
-                                ? '✅ All patients scored by GPT-4o'
+                                ? '✅ All patients scored by Gemini'
                                 : '⚠️ AI not enabled - all scores are rule-based',
                     },
                     commonCriteria: sortedCriteria,

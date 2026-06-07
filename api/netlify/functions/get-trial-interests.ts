@@ -1,6 +1,7 @@
 import { Handler } from "@netlify/functions";
 import { query, initializeDatabase } from "./db";
 import { createCorsHandler } from "./cors-utils";
+import { verifyTokenAndGetUser } from "./auth-utils";
 
 export type InterestedPatient = {
   id: number;
@@ -35,13 +36,18 @@ const handler: Handler = async (event, context) => {
       console.warn("Database init warning:", err instanceof Error ? err.message : String(err));
     }
 
-    // Get auth from headers
-    const userId = event.headers["x-user-id"];
-    console.log("Auth check - userId:", !!userId);
-
-    if (!userId) {
-      return cors.response(401, { ok: false, message: "Missing x-user-id header" });
+    // Get auth from verified session
+    let authUser;
+    try {
+      authUser = await verifyTokenAndGetUser(event);
+    } catch {
+      return cors.response(401, { ok: false, message: "Unauthorized" });
     }
+    if (!authUser) {
+      return cors.response(401, { ok: false, message: "Unauthorized" });
+    }
+    const userId = authUser.userId;
+    console.log("Auth check - userId:", !!userId);
 
     // Get NCT ID from query params
     const nctId = event.queryStringParameters?.nctId as string;

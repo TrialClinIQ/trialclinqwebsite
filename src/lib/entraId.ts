@@ -1,55 +1,17 @@
 /**
- * Azure Entra ID Authentication Module
- * Uses Microsoft Authentication Library (MSAL) for browser
+ * Firebase Authentication Module
+ * Replaces Azure Entra ID (MSAL) with Firebase Auth
  */
 
-import { PublicClientApplication, AccountInfo, AuthenticationResult, InteractionRequiredAuthError } from '@azure/msal-browser';
-import { msalConfig, loginRequest, tokenRequest, silentRequest } from './msalConfig';
-
-let msalInstance: PublicClientApplication | null = null;
-let initError: string | null = null;
-
-/**
- * Detect if the app is running in an iframe
- */
-function isInIframe(): boolean {
-  try {
-    return window.parent !== window;
-  } catch {
-    return false;
-  }
-}
-
-// Initialize MSAL instance with error handling
-export function initMsal(): PublicClientApplication | null {
-  if (initError) {
-    console.error('MSAL initialization failed:', initError);
-    return null;
-  }
-
-  if (!msalInstance) {
-    try {
-      // Validate configuration
-      if (!msalConfig.auth.clientId) {
-        throw new Error('Azure Client ID not configured. Set VITE_AZURE_CLIENT_ID environment variable.');
-      }
-      if (!msalConfig.auth.authority || msalConfig.auth.authority.includes('undefined')) {
-        throw new Error('Azure Tenant ID not configured. Set VITE_AZURE_TENANT_ID environment variable.');
-      }
-
-      msalInstance = new PublicClientApplication(msalConfig);
-    } catch (error) {
-      initError = error instanceof Error ? error.message : 'Failed to initialize MSAL';
-      console.error('MSAL initialization error:', initError);
-      return null;
-    }
-  }
-  return msalInstance;
-}
-
-export function getMsalInstance(): PublicClientApplication | null {
-  return msalInstance || initMsal();
-}
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  signOut,
+  onAuthStateChanged,
+  type User,
+} from 'firebase/auth';
+import { auth } from './firebaseConfig';
 
 export interface SignUpInput {
   email: string;
@@ -72,84 +34,37 @@ export interface AuthUser {
 }
 
 /**
- * Sign up a new user via Azure Entra ID
+ * Sign up a new user with Firebase Auth
  */
 export async function signUpUser(input: SignUpInput): Promise<{ userId: string; requiresConfirmation: boolean }> {
   try {
-    const msal = getMsalInstance();
+    const credential = await createUserWithEmailAndPassword(auth, input.email, input.password);
 
-    if (!msal) {
-      throw new Error('Azure Entra ID is not properly configured. Please check your environment variables: VITE_AZURE_CLIENT_ID and VITE_AZURE_TENANT_ID');
-    }
-
-    const loginHint = input.email.trim();
-    const request = {
-      ...loginRequest,
-      prompt: 'select_account',
-      loginHint: loginHint || undefined,
-      extraQueryParameters: loginHint ? { login_hint: loginHint } : undefined,
-    };
-
-    try {
-      msal.setActiveAccount(null);
-    } catch (_) {}
-
-    let response: AuthenticationResult;
-
-    // Use popup flow in iframes, redirect flow otherwise
-    if (isInIframe()) {
-      response = await msal.loginPopup(request);
-    } else {
-      // Use redirect flow so callback page handles navigation consistently
-      await msal.loginRedirect(request);
-      // Control won't reach here because redirect will occur
-      return { userId: '', requiresConfirmation: false };
-    }
-
-    if (!response.account) {
-      throw new Error('No account returned from sign-up');
-    }
-
-    try {
-      msal.setActiveAccount(response.account);
-    } catch (_) {}
+    await updateProfile(credential.user, {
+      displayName: `${input.firstName} ${input.lastName}`.trim(),
+    });
 
     return {
-      userId: response.account.localAccountId || response.account.homeAccountId || '',
+      userId: credential.user.uid,
       requiresConfirmation: false,
     };
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-
-    // Provide helpful error messages
-    if (errorMsg.includes('not found') || errorMsg.includes('AADSTS90002')) {
-      throw new Error('Azure Entra ID tenant is not configured correctly. Please verify your VITE_AZURE_TENANT_ID environment variable.');
-    }
-
-    throw new Error(`Sign up failed: ${errorMsg}`);
+    throw new Error(`Sign up failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 /**
- * Confirm user MFA
+ * Confirm user MFA (no-op for Firebase — handled by Firebase Console if enabled)
  */
-export async function confirmUserMFA(email: string, mfaCode: string): Promise<void> {
-  try {
-    console.log('MFA confirmation handled by Azure Entra ID during sign-in');
-  } catch (error) {
-    throw new Error(`MFA confirmation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
+export async function confirmUserMFA(_email: string, _mfaCode: string): Promise<void> {
+  console.log('MFA confirmation handled by Firebase Auth');
 }
 
 /**
- * Resend MFA code
+ * Resend MFA code (no-op for Firebase — handled by Firebase Console if enabled)
  */
-export async function resendMFACode(email: string): Promise<void> {
-  try {
-    console.log('MFA code resend handled by Azure Entra ID');
-  } catch (error) {
-    throw new Error(`MFA resend failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-  }
+export async function resendMFACode(_email: string): Promise<void> {
+  console.log('MFA code resend handled by Firebase Auth');
 }
 
 /**
@@ -157,88 +72,21 @@ export async function resendMFACode(email: string): Promise<void> {
  */
 export async function signInUser(input: SignInInput): Promise<AuthUser | null> {
   try {
-    const msal = getMsalInstance();
+    const credential = await signInWithEmailAndPassword(auth, input.email, input.password);
+    const user = credential.user;
 
-    if (!msal) {
-      throw new Error('Azure Entra ID is not properly configured. Please check your environment variables: VITE_AZURE_CLIENT_ID and VITE_AZURE_TENANT_ID');
-    }
-
-    const loginHint = input.email.trim();
-    const normalize = (value: string) => value.trim().toLowerCase();
-    const accounts = msal.getAllAccounts();
-    const matchingAccount = loginHint
-      ? accounts.find(account => normalize(account.username) === normalize(loginHint))
-      : accounts[0];
-    let response: AuthenticationResult;
-    const buildInteractiveRequest = (hint: string | undefined, prompt: 'login' | 'select_account') => ({
-      ...loginRequest,
-      prompt,
-      loginHint: hint || undefined,
-      extraQueryParameters: hint ? { login_hint: hint } : undefined,
-    });
-
-    if (matchingAccount) {
-      try {
-        msal.setActiveAccount(matchingAccount);
-      } catch (_) {}
-      try {
-        response = await msal.acquireTokenSilent({
-          ...silentRequest,
-          account: matchingAccount,
-        });
-      } catch (error) {
-        if (error instanceof InteractionRequiredAuthError) {
-          if (isInIframe()) {
-            response = await msal.loginPopup(
-              buildInteractiveRequest(loginHint || matchingAccount.username, 'select_account')
-            );
-          } else {
-            await msal.loginRedirect(
-              buildInteractiveRequest(loginHint || matchingAccount.username, 'select_account')
-            );
-            return null;
-          }
-        } else {
-          throw error;
-        }
-      }
-    } else {
-      // No cached account matches the requested email, force an explicit login using that email
-      try {
-        msal.setActiveAccount(null);
-      } catch (_) {}
-      if (isInIframe()) {
-        response = await msal.loginPopup(buildInteractiveRequest(loginHint || undefined, 'login'));
-      } else {
-        await msal.loginRedirect(buildInteractiveRequest(loginHint || undefined, 'login'));
-        return null;
-      }
-    }
-
-    if (!response.account) {
-      throw new Error('No account returned from sign-in');
-    }
-
-    try {
-      msal.setActiveAccount(response.account);
-    } catch (_) {}
+    const displayName = user.displayName || '';
+    const parts = displayName.split(' ');
 
     return {
-      email: response.account.username || input.email,
-      firstName: response.account.name?.split(' ')[0] || '',
-      lastName: response.account.name?.split(' ').slice(1).join(' ') || '',
+      email: user.email || input.email,
+      firstName: parts[0] || '',
+      lastName: parts.slice(1).join(' ') || '',
       role: 'patient',
-      userId: response.account.localAccountId || response.account.homeAccountId || '',
+      userId: user.uid,
     };
   } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-
-    // Provide helpful error messages
-    if (errorMsg.includes('not found') || errorMsg.includes('AADSTS90002')) {
-      throw new Error('Azure Entra ID tenant is not configured correctly. Please verify your VITE_AZURE_TENANT_ID environment variable.');
-    }
-
-    throw new Error(`Sign in failed: ${errorMsg}`);
+    throw new Error(`Sign in failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
@@ -246,155 +94,60 @@ export async function signInUser(input: SignInInput): Promise<AuthUser | null> {
  * Get current authenticated user
  */
 export async function getCurrentAuthUser(): Promise<AuthUser | null> {
-  try {
-    const msal = getMsalInstance();
-    
-    if (!msal) {
-      return null;
-    }
+  const user = auth.currentUser;
 
-    const accounts = msal.getAllAccounts();
-
-    if (accounts.length === 0) {
-      return null;
-    }
-
-    const account = accounts[0];
-    try {
-      msal.setActiveAccount(account);
-    } catch (_) {}
-    return {
-      email: account.username,
-      firstName: account.name?.split(' ')[0] || '',
-      lastName: account.name?.split(' ').slice(1).join(' ') || '',
-      role: 'patient',
-      userId: account.localAccountId || account.homeAccountId || '',
-    };
-  } catch (error) {
-    console.error('Failed to get current auth user:', error);
+  if (!user) {
     return null;
   }
+
+  const displayName = user.displayName || '';
+  const parts = displayName.split(' ');
+
+  return {
+    email: user.email || '',
+    firstName: parts[0] || '',
+    lastName: parts.slice(1).join(' ') || '',
+    role: 'patient',
+    userId: user.uid,
+  };
 }
 
 /**
- * Sign out
+ * Sign out the current user
  */
 export async function signOutUser(): Promise<void> {
   try {
-    const msal = getMsalInstance();
-    
-    if (!msal) {
-      return;
-    }
-
-    try {
-      const accounts = msal.getAllAccounts();
-      if (accounts[0]) {
-        msal.setActiveAccount(null);
-      }
-    } catch (_) {}
-
-    try {
-      await msal.getTokenCache().clear();
-    } catch (_) {}
+    await signOut(auth);
   } catch (error) {
     throw new Error(`Sign out failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
 
 /**
- * Check if authenticated
+ * Check if a user is currently authenticated
  */
 export async function isUserAuthenticated(): Promise<boolean> {
-  try {
-    const msal = getMsalInstance();
-    
-    if (!msal) {
-      return false;
-    }
-
-    const accounts = msal.getAllAccounts();
-    return accounts.length > 0;
-  } catch (error) {
-    console.error('Failed to check authentication status:', error);
-    return false;
-  }
+  return auth.currentUser !== null;
 }
 
 /**
- * Get access token for API calls
+ * Get Firebase ID token for API calls
  */
 export async function getAccessToken(): Promise<string | null> {
   try {
-    const msal = getMsalInstance();
-    
-    if (!msal) {
-      return null;
-    }
-
-    const accounts = msal.getAllAccounts();
-    if (accounts[0]) {
-      try {
-        msal.setActiveAccount(accounts[0]);
-      } catch (_) {}
-    }
-
-    if (accounts.length === 0) {
-      return null;
-    }
-
-    const response = await msal.acquireTokenSilent({
-      ...silentRequest,
-      account: accounts[0],
-    });
-
-    return response.accessToken;
+    return (await auth.currentUser?.getIdToken()) ?? null;
   } catch (error) {
-    if (error instanceof InteractionRequiredAuthError) {
-      console.error('Token acquisition requires interaction');
-      try {
-        const response = await msal?.acquireTokenPopup(tokenRequest);
-        return response?.accessToken || null;
-      } catch (interactiveError) {
-        console.error('Failed to acquire token interactively:', interactiveError);
-        return null;
-      }
-    } else {
-      console.error('Failed to get access token:', error);
-      return null;
-    }
+    console.error('Failed to get access token:', error);
+    return null;
   }
 }
 
 /**
- * Refresh access token
+ * Refresh Firebase ID token
  */
 export async function refreshAccessToken(): Promise<string | null> {
   try {
-    const msal = getMsalInstance();
-    
-    if (!msal) {
-      return null;
-    }
-
-    const accounts = msal.getAllAccounts();
-    if (accounts[0]) {
-      try {
-        msal.setActiveAccount(accounts[0]);
-      } catch (_) {}
-    }
-
-    if (accounts.length === 0) {
-      return null;
-    }
-
-    const response = await msal.acquireTokenSilent({
-      ...silentRequest,
-      account: accounts[0],
-      forceRefresh: true,
-    });
-
-    return response.accessToken;
+    return (await auth.currentUser?.getIdToken(/* forceRefresh */ true)) ?? null;
   } catch (error) {
     console.error('Failed to refresh token:', error);
     return null;
@@ -402,8 +155,12 @@ export async function refreshAccessToken(): Promise<string | null> {
 }
 
 /**
- * Get user profile
+ * Get user profile (alias for getCurrentAuthUser)
  */
 export async function getUserProfile(): Promise<AuthUser | null> {
   return getCurrentAuthUser();
 }
+
+// Legacy MSAL-compatibility stubs — kept so nothing that imported them breaks
+export function initMsal() { return null; }
+export function getMsalInstance() { return null; }

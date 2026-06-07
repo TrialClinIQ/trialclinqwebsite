@@ -4,15 +4,21 @@ exports.handler = void 0;
 const db_1 = require("./db");
 const cors_utils_1 = require("./cors-utils");
 const csrf_utils_1 = require("./csrf-utils");
+const auth_utils_1 = require("./auth-utils");
 const handler = async (event) => {
     const cors = (0, cors_utils_1.createCorsHandler)(event);
     if (event.httpMethod === "OPTIONS") {
         return cors.handleOptions("GET,POST,DELETE,OPTIONS");
     }
-    const userId = event.headers["x-user-id"];
-    const providerId = event.headers["x-provider-id"] || userId;
-    if (!userId) {
-        return cors.response(401, { ok: false, error: "Missing x-user-id header" });
+    let userId;
+    let providerId;
+    try {
+        const authUser = await (0, auth_utils_1.verifyTokenAndGetUser)(event);
+        userId = authUser.userId;
+        providerId = authUser.userId;
+    }
+    catch (authErr) {
+        return cors.response(401, { ok: false, error: "Unauthorized" });
     }
     try {
         // GET - Fetch all trials for a provider

@@ -1,8 +1,9 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { consumePostLoginRedirect, useAuth } from '../lib/auth';
-import { getMsalInstance, getAccessToken } from '../lib/entraId';
-import { loginRequest } from '../lib/msalConfig';
+import { getAccessToken } from '../lib/entraId';
+import { auth } from '../lib/firebaseConfig';
+import { onAuthStateChanged } from 'firebase/auth';
 import { generatePatientId } from '../lib/patientIdUtils';
 import { generateProviderId } from '../lib/providerIdUtils';
 import { savePatientProfile, saveProviderProfile } from '../lib/storage';
@@ -12,168 +13,112 @@ export default function AuthCallback() {
   const { signIn } = useAuth();
 
   useEffect(() => {
-    const handleAuthCallback = async () => {
-      const pendingRole = (localStorage.getItem('pending_role_v1') as 'patient' | 'provider' | null) || 'patient';
-      const pendingSignupRaw = localStorage.getItem('pending_signup_v1');
-      const pendingSignup = pendingSignupRaw ? JSON.parse(pendingSignupRaw) : null;
-      const dashboardPath = pendingRole === 'provider' ? '/providers/dashboard' : '/patients/health-profile';
-      const loginPath = pendingRole === 'provider' ? '/providers/login' : '/patients/login';
-      const postLoginPath = consumePostLoginRedirect(dashboardPath);
-      const retryKey = 'msal_redirect_retry_v1';
+    const pendingRole = (localStorage.getItem('pending_role_v1') as 'patient' | 'provider' | null) || 'patient';
+    const pendingSignupRaw = localStorage.getItem('pending_signup_v1');
+    const pendingSignup = pendingSignupRaw ? JSON.parse(pendingSignupRaw) : null;
+    const dashboardPath = pendingRole === 'provider' ? '/providers/dashboard' : '/patients/health-profile';
+    const loginPath = pendingRole === 'provider' ? '/providers/login' : '/patients/login';
+    const postLoginPath = consumePostLoginRedirect(dashboardPath);
 
-      const normalizeEmail = (value?: string) => (value || '').trim().toLowerCase();
-      const pendingEmail = normalizeEmail(pendingSignup?.email);
+    const normalizeEmail = (value?: string) => (value || '').trim().toLowerCase();
+    const pendingEmail = normalizeEmail(pendingSignup?.email);
 
-      try {
-        const msal = getMsalInstance();
-        if (!msal) {
-          localStorage.removeItem('pending_role_v1');
-          navigate(loginPath, { replace: true, state: { authMessage: 'We could not start Microsoft sign-in. Please try again or create an account.' } });
-          return;
-        }
+    // Firebase Auth state resolves synchronously on page load once the SDK
+    // has initialised (usually within one tick). onAuthStateChanged fires
+    // immediately with the current user or null.
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      unsubscribe(); // only need the first emission
 
-        const result = await msal.handleRedirectPromise();
-        const accounts = msal.getAllAccounts();
-        const account = result?.account || accounts[0];
-
-        if (account) {
-          msal.setActiveAccount(account);
-
-          // Enforce email match to pending signup data
-          const accountEmail = normalizeEmail(account.username);
-          if (pendingEmail && accountEmail && pendingEmail !== accountEmail) {
-            try {
-              msal.setActiveAccount(null);
-              await msal.getTokenCache().clear();
-            } catch (_) {}
-            localStorage.removeItem('pending_role_v1');
-            localStorage.removeItem('pending_signup_v1');
-            sessionStorage.removeItem(retryKey);
-            navigate(loginPath, {
-              replace: true,
-              state: {
-                authMessage: `Please sign in with ${pendingSignup?.email} to finish creating your account.`,
-              },
-            });
-            return;
-          }
-
-          const role = pendingRole;
-
-          // Update auth context with user info
-          signIn({
-            email: account.username,
-            firstName: account.name?.split(' ')[0] || '',
-            lastName: account.name?.split(' ').slice(1).join(' ') || '',
-            role,
-            userId: account.localAccountId || account.homeAccountId || '',
-          });
-
-          // Best-effort: sync user record in backend so account exists server-side immediately
-          try {
-            const token = await getAccessToken();
-            if (token) {
-              await fetch("/api/whoami", {
-                method: "GET",
-                headers: { Authorization: `Bearer ${token}` },
-              });
-
-              // Auto-sync profile data from localStorage to backend (mirrors patient & provider flows)
-              const user = {
-                email: account.username,
-                firstName: account.name?.split(' ')[0] || '',
-                lastName: account.name?.split(' ').slice(1).join(' ') || '',
-                role: role,
-                userId: account.localAccountId || account.homeAccountId || '',
-              };
-
-              if (role === 'patient') {
-                // Sync patient profile if it exists in localStorage
-                try {
-                  const raw = localStorage.getItem('tc_health_profile_v1');
-                  if (raw) {
-                    const profile = JSON.parse(raw);
-                    const patientId = generatePatientId(user);
-                    if (patientId) {
-                      await savePatientProfile({
-                        ...profile,
-                        patientId,
-                        email: account.username,
-                      }, token);
-                    }
-                  }
-                } catch (err) {
-                  // Patient profile auto-sync failed silently
-                }
-              } else if (role === 'provider') {
-                // Sync provider profile if it exists in localStorage
-                try {
-                  const raw = localStorage.getItem('tc_provider_profile_v1');
-                  if (raw) {
-                    const profile = JSON.parse(raw);
-                    const providerId = generateProviderId(user);
-                    if (providerId) {
-                      await saveProviderProfile({
-                        ...profile,
-                        providerId,
-                        email: account.username,
-                      }, token);
-                    }
-                  }
-                } catch (err) {
-                  // Provider profile auto-sync failed silently
-                }
-              }
-            }
-          } catch (syncErr) {
-            // Profile sync failed silently
-          }
-
-          localStorage.removeItem('pending_role_v1');
-          localStorage.removeItem('pending_signup_v1');
-          sessionStorage.removeItem(retryKey);
-          navigate(postLoginPath, { replace: true });
-        } else {
-          // Retry once with a forced redirect to capture the account
-          const hasRetried = sessionStorage.getItem(retryKey) === '1';
-          if (!hasRetried) {
-            sessionStorage.setItem(retryKey, '1');
-            await msal.loginRedirect({
-              ...loginRequest,
-              prompt: 'select_account',
-              loginHint: pendingEmail || undefined,
-              extraQueryParameters: pendingEmail ? { login_hint: pendingEmail } : undefined,
-            });
-            return;
-          }
-
-          // No account found after retry: prompt to sign up
-          localStorage.removeItem('pending_role_v1');
-          localStorage.removeItem('pending_signup_v1');
-          sessionStorage.removeItem(retryKey);
-          navigate(loginPath, {
-            replace: true,
-            state: {
-              authMessage: pendingSignup
-                ? "We couldn't finish creating your TrialCliniq account. Please sign up again or try a different Microsoft login."
-                : "We couldn't find a TrialCliniq account for that Microsoft login. Please sign up or try again.",
-            },
-          });
-        }
-      } catch (error) {
+      if (!firebaseUser) {
         localStorage.removeItem('pending_role_v1');
         localStorage.removeItem('pending_signup_v1');
-        sessionStorage.removeItem(retryKey);
+        navigate(loginPath, {
+          replace: true,
+          state: { authMessage: 'Sign-in was not completed. Please try again or create an account.' },
+        });
+        return;
+      }
+
+      // Enforce email match to pending signup data
+      const accountEmail = normalizeEmail(firebaseUser.email || '');
+      if (pendingEmail && accountEmail && pendingEmail !== accountEmail) {
+        localStorage.removeItem('pending_role_v1');
+        localStorage.removeItem('pending_signup_v1');
         navigate(loginPath, {
           replace: true,
           state: {
-            authMessage: 'Sign-in was not completed. Please try again or create an account.',
+            authMessage: `Please sign in with ${pendingSignup?.email} to finish creating your account.`,
           },
         });
+        return;
       }
-    };
 
-    handleAuthCallback();
+      const role = pendingRole;
+      const displayName = firebaseUser.displayName || '';
+      const parts = displayName.split(' ');
+      const firstName = parts[0] || '';
+      const lastName = parts.slice(1).join(' ') || '';
+
+      signIn({
+        email: firebaseUser.email || '',
+        firstName,
+        lastName,
+        role,
+        userId: firebaseUser.uid,
+      });
+
+      // Best-effort: sync user record in backend so account exists server-side immediately
+      try {
+        const token = await getAccessToken();
+        if (token) {
+          await fetch('/api/whoami', {
+            method: 'GET',
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          const user = {
+            email: firebaseUser.email || '',
+            firstName,
+            lastName,
+            role,
+            userId: firebaseUser.uid,
+          };
+
+          if (role === 'patient') {
+            try {
+              const raw = localStorage.getItem('tc_health_profile_v1');
+              if (raw) {
+                const profile = JSON.parse(raw);
+                const patientId = generatePatientId(user);
+                if (patientId) {
+                  await savePatientProfile({ ...profile, patientId, email: firebaseUser.email }, token);
+                }
+              }
+            } catch (_) {}
+          } else if (role === 'provider') {
+            try {
+              const raw = localStorage.getItem('tc_provider_profile_v1');
+              if (raw) {
+                const profile = JSON.parse(raw);
+                const providerId = generateProviderId(user);
+                if (providerId) {
+                  await saveProviderProfile({ ...profile, providerId, email: firebaseUser.email }, token);
+                }
+              }
+            } catch (_) {}
+          }
+        }
+      } catch (_) {
+        // sync failure is non-fatal
+      }
+
+      localStorage.removeItem('pending_role_v1');
+      localStorage.removeItem('pending_signup_v1');
+      navigate(postLoginPath, { replace: true });
+    });
+
+    // Cleanup on unmount (in case the component is torn down before the callback fires)
+    return () => unsubscribe();
   }, [navigate, signIn]);
 
   return (

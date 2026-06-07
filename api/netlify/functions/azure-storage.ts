@@ -1,45 +1,16 @@
 import crypto from 'crypto';
-import {
-  BlobServiceClient,
-  ContainerClient,
-  BlobSASPermissions,
-  StorageSharedKeyCredential,
-  generateBlobSASQueryParameters,
-} from '@azure/storage-blob';
+import { Storage } from '@google-cloud/storage';
 
-const CONTAINER_NAME = 'medical-documents';
+const BUCKET_NAME = process.env.GCS_BUCKET_NAME || 'trialcliniq-documents';
+const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || 'trialcliniq';
 const PATIENT_ID_REGEX = /^[A-Za-z0-9._-]+$/;
 
-// Initialize Azure Blob Storage client
-function getBlobServiceClient(): BlobServiceClient {
-  const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME;
-  const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY;
-
-  if (!accountName || !accountKey) {
-    throw new Error('Missing Azure Storage credentials');
-  }
-
-  return BlobServiceClient.fromConnectionString(
-    `DefaultEndpointsProtocol=https;AccountName=${accountName};AccountKey=${accountKey};EndpointSuffix=core.windows.net`
-  );
+// Initialize GCS client
+function getStorageClient(): Storage {
+  return new Storage({ projectId: PROJECT_ID });
 }
 
-// Get container client
-async function getContainerClient(): Promise<ContainerClient> {
-  const blobServiceClient = getBlobServiceClient();
-  const containerClient = blobServiceClient.getContainerClient(CONTAINER_NAME);
-
-  // Create container if it doesn't exist
-  try {
-    await containerClient.create();
-  } catch (error: any) {
-    // Container already exists
-  }
-
-  return containerClient;
-}
-
-// Upload file to blob storage
+// Upload file to GCS
 export async function uploadFileToBlob(
   patientId: string,
   fileName: string,
@@ -50,45 +21,46 @@ export async function uploadFileToBlob(
   const safeFileName = sanitizeFileName(fileName);
   const blobName = buildBlobName(safePatientId, safeFileName);
 
-  const containerClient = await getContainerClient();
+  const storage = getStorageClient();
+  const bucket = storage.bucket(BUCKET_NAME);
+  const file = bucket.file(blobName);
 
   try {
-    const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-    
-    await blockBlobClient.upload(fileBuffer, fileBuffer.length, {
-      blobHTTPHeaders: {
-        blobContentType: mimeType,
-        blobContentDisposition: `inline; filename="${encodeURIComponent(safeFileName)}"`,
-      },
+    await file.save(fileBuffer, {
+      contentType: mimeType,
       metadata: {
-        patientId: safePatientId,
-        originalFileName: fileName,
-        safeFileName,
-        uploadedAt: new Date().toISOString(),
+        contentDisposition: `inline; filename="${encodeURIComponent(safeFileName)}"`,
+        metadata: {
+          patientId: safePatientId,
+          originalFileName: fileName,
+          safeFileName,
+          uploadedAt: new Date().toISOString(),
+        },
       },
     });
 
-    const blobUrl = blockBlobClient.url;
+    const blobUrl = `https://storage.googleapis.com/${BUCKET_NAME}/${blobName}`;
     return { blobName, blobUrl, safeFileName };
   } catch (error: any) {
     throw new Error(`Failed to upload file: ${error.message}`);
   }
 }
 
-// Download file from blob storage
+// Download file from GCS
 export async function downloadFileFromBlob(blobName: string): Promise<Buffer> {
-  const containerClient = await getContainerClient();
   const normalizedName = normalizeBlobName(blobName);
 
   if (!normalizedName) {
     throw new Error('Invalid blob name');
   }
 
+  const storage = getStorageClient();
+  const bucket = storage.bucket(BUCKET_NAME);
+  const file = bucket.file(normalizedName);
+
   try {
-    const blockBlobClient = containerClient.getBlockBlobClient(normalizedName);
-    const downloadBlockBlobResponse = await blockBlobClient.download(0);
-    
-    return await streamToBuffer(downloadBlockBlobResponse.readableStreamBody!);
+    const [contents] = await file.download();
+    return contents;
   } catch (error: any) {
     throw new Error(`Failed to download file: ${error.message}`);
   }
@@ -97,7 +69,9 @@ export async function downloadFileFromBlob(blobName: string): Promise<Buffer> {
 // List files for a patient
 export async function listPatientFiles(patientId: string) {
   const safePatientId = ensureValidPatientId(patientId);
-  const containerClient = await getContainerClient();
+  const storage = getStorageClient();
+  const bucket = storage.bucket(BUCKET_NAME);
+
   const files: Array<{
     name: string;
     size?: number;
@@ -106,13 +80,17 @@ export async function listPatientFiles(patientId: string) {
   }> = [];
 
   try {
-    for await (const blob of containerClient.listBlobsFlat({ prefix: `${safePatientId}/` })) {
-      const blobUrl = containerClient.getBlockBlobClient(blob.name).url;
+    const [gcsFiles] = await bucket.getFiles({ prefix: `${safePatientId}/` });
+
+    for (const gcsFile of gcsFiles) {
+      const [metadata] = await gcsFile.getMetadata();
       files.push({
-        name: blob.name,
-        size: blob.properties.contentLength,
-        url: await generateFileAccessUrl(blob.name).catch(() => blobUrl),
-        uploadedAt: blob.properties.createdOn,
+        name: gcsFile.name,
+        size: metadata.size ? Number(metadata.size) : undefined,
+        url: await generateFileAccessUrl(gcsFile.name).catch(
+          () => `https://storage.googleapis.com/${BUCKET_NAME}/${gcsFile.name}`
+        ),
+        uploadedAt: metadata.timeCreated ? new Date(metadata.timeCreated) : undefined,
       });
     }
   } catch (error: any) {
@@ -122,99 +100,76 @@ export async function listPatientFiles(patientId: string) {
   return files;
 }
 
-// Delete file from blob storage
+// Delete file from GCS
 export async function deleteFileFromBlob(blobName: string): Promise<void> {
-  const containerClient = await getContainerClient();
   const normalizedName = normalizeBlobName(blobName);
+
   if (!normalizedName) {
     throw new Error('Invalid blob name');
   }
 
+  const storage = getStorageClient();
+  const bucket = storage.bucket(BUCKET_NAME);
+  const file = bucket.file(normalizedName);
+
   try {
-    const blockBlobClient = containerClient.getBlockBlobClient(normalizedName);
-    await blockBlobClient.delete();
+    await file.delete();
   } catch (error: any) {
     throw new Error(`Failed to delete file: ${error.message}`);
   }
 }
 
-// Helper: Convert readable stream to buffer
-async function streamToBuffer(readableStream: any): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-
-    readableStream.on('data', (data: any) => {
-      chunks.push(data instanceof Buffer ? data : Buffer.from(data));
-    });
-
-    readableStream.on('end', () => {
-      resolve(Buffer.concat(chunks));
-    });
-
-    readableStream.on('error', reject);
-  });
-}
-
-// Generate SAS URL for file (temporary access)
+// Generate a signed URL for temporary file access
 export async function generateFileAccessUrl(blobNameOrUrl: string, expiryHours: number = 24): Promise<string> {
-  const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME;
-  const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY;
-
-  if (!accountName || !accountKey) {
-    throw new Error('Missing Azure Storage credentials');
-  }
-
   const blobName = normalizeBlobName(blobNameOrUrl);
+
   if (!blobName) {
     throw new Error('Invalid blob name or URL');
   }
 
-  const expiryDate = new Date();
-  expiryDate.setHours(expiryDate.getHours() + expiryHours);
+  const storage = getStorageClient();
+  const bucket = storage.bucket(BUCKET_NAME);
+  const file = bucket.file(blobName);
+
+  const expiresMs = Date.now() + expiryHours * 60 * 60 * 1000;
 
   try {
-    const credential = new StorageSharedKeyCredential(accountName, accountKey);
-    const sasParams = generateBlobSASQueryParameters(
-      {
-        containerName: CONTAINER_NAME,
-        blobName,
-        permissions: BlobSASPermissions.parse('r'),
-        startsOn: new Date(Date.now() - 5 * 60 * 1000), // allow small clock skew
-        expiresOn: expiryDate,
-      },
-      credential
-    ).toString();
+    const [signedUrl] = await file.getSignedUrl({
+      action: 'read',
+      expires: expiresMs,
+    });
 
-    return `https://${accountName}.blob.core.windows.net/${CONTAINER_NAME}/${blobName}?${sasParams}`;
+    return signedUrl;
   } catch (error: any) {
-    throw new Error(`Failed to generate SAS URL: ${error.message}`);
+    throw new Error(`Failed to generate signed URL: ${error.message}`);
   }
 }
 
-// Normalize blob name regardless of whether a URL or path was provided
+// Normalize object name regardless of whether a full GCS URL or path was provided
 function normalizeBlobName(blobNameOrUrl: string): string | null {
   if (!blobNameOrUrl) return null;
 
   const trimmed = blobNameOrUrl.trim();
   if (!trimmed) return null;
 
-  // If it's a full URL, strip protocol/host and container
+  // If it's a full URL (https://storage.googleapis.com/bucket/object), strip host and bucket
   try {
     const url = new URL(trimmed);
     const pathParts = url.pathname.replace(/^\/+/, '').split('/');
-    const withoutContainer = pathParts[0] === CONTAINER_NAME ? pathParts.slice(1) : pathParts;
-    return withoutContainer.join('/');
+    // pathname starts with bucket name when using the XML API URL format
+    const withoutBucket = pathParts[0] === BUCKET_NAME ? pathParts.slice(1) : pathParts;
+    return withoutBucket.join('/');
   } catch {
-    // Not a URL - fall back to a normalized path
+    // Not a URL - treat as a plain path
     const withoutLeadingSlash = trimmed.replace(/^\/+/, '');
-    if (withoutLeadingSlash.startsWith(`${CONTAINER_NAME}/`)) {
-      return withoutLeadingSlash.slice(CONTAINER_NAME.length + 1);
+    if (withoutLeadingSlash.startsWith(`${BUCKET_NAME}/`)) {
+      return withoutLeadingSlash.slice(BUCKET_NAME.length + 1);
     }
     return withoutLeadingSlash;
   }
 }
 
-// Validate patient ID format to prevent path traversal and unexpected blob keys
+// Validate patient ID format to prevent path traversal
 function ensureValidPatientId(patientId: string): string {
   const trimmed = patientId?.trim();
   if (!trimmed || !PATIENT_ID_REGEX.test(trimmed)) {
@@ -238,7 +193,7 @@ function sanitizeFileName(fileName: string): string {
   return `${safeName || fallback}${safeExt}`.slice(0, 180);
 }
 
-// Build unique blob name using timestamp + random suffix
+// Build unique object name using timestamp + random suffix
 function buildBlobName(patientId: string, safeFileName: string): string {
   const timestamp = Date.now();
   const randomSuffix = crypto.randomUUID?.() ?? crypto.randomBytes(8).toString('hex');

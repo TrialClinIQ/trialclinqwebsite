@@ -1,60 +1,13 @@
-import { Configuration } from '@azure/msal-browser';
+/**
+ * Firebase configuration re-export.
+ * This file previously held MSAL (Azure Entra ID) configuration.
+ * It is kept so that any existing imports of msalConfig do not break.
+ */
 
-const origin = typeof window !== 'undefined' ? window.location.origin : undefined;
-const defaultRedirect = origin ? `${origin}/auth-callback` : 'https://app.trialcliniq.com/auth-callback';
-const defaultLogoutRedirect = origin ? `${origin}/` : 'https://app.trialcliniq.com/';
+export { auth, default as firebaseApp } from './firebaseConfig';
 
-// Use environment variable if set AND it's not the old ngrok URL
-// Otherwise use the current window origin for better development experience
-const envRedirect = import.meta.env.VITE_AZURE_REDIRECT_URI;
-const isOldNgrokUrl = envRedirect && envRedirect.includes('vapourizable-uninterestingly-minerva.ngrok-free.dev');
-const redirectUri = (envRedirect && !isOldNgrokUrl) ? envRedirect : defaultRedirect;
-
-// Azure credentials must be set via environment variables -- no hardcoded fallbacks
-const clientId = import.meta.env.VITE_AZURE_CLIENT_ID || '';
-const tenantId = import.meta.env.VITE_AZURE_TENANT_ID || '';
-if (!clientId || !tenantId) {
-  console.error('VITE_AZURE_CLIENT_ID and VITE_AZURE_TENANT_ID must be set. Azure AD auth will not work.');
-}
-
-export const msalConfig: Configuration = {
-  auth: {
-    clientId: clientId,
-    authority: `https://login.microsoftonline.com/${tenantId}`,
-    redirectUri: redirectUri,
-    postLogoutRedirectUri: import.meta.env.VITE_AZURE_LOGOUT_URI || defaultLogoutRedirect,
-    // Keep the SPA on the callback route so our router can handle post-login navigation
-    navigateToLoginRequestUrl: false,
-  },
-  cache: {
-    // Local storage avoids session loss on redirect; cookie storage helps Safari
-    cacheLocation: 'localStorage',
-    storeAuthStateInCookie: true,
-  },
-  system: {
-    allowNativeBroker: false,
-    loggerOptions: {
-      loggerCallback: (level, message, containsPii) => {
-        if (!containsPii) {
-          if (import.meta.env.DEV) {
-            console.debug(`[MSAL] ${message}`);
-          }
-        }
-      },
-      piiLoggingEnabled: false,
-    },
-  },
-};
-
-export const loginRequest = {
-  scopes: ['User.Read', 'email', 'profile', 'openid'],
-};
-
-export const tokenRequest = {
-  scopes: ['User.Read', 'email', 'profile', 'openid'],
-};
-
-export const silentRequest = {
-  ...tokenRequest,
-  forceRefresh: false,
-};
+// Compatibility stubs for any code that still references the old MSAL exports.
+export const msalConfig = {};
+export const loginRequest = { scopes: [] };
+export const tokenRequest = { scopes: [] };
+export const silentRequest = { scopes: [], forceRefresh: false };

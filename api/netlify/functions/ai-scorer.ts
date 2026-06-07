@@ -1,7 +1,6 @@
 import type { Handler } from "@netlify/functions";
+import { VertexAI } from "@google-cloud/vertexai";
 import { createCorsHandler } from "./cors-utils";
-
-const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
 
 function clamp(n: number, min = 0, max = 100) {
   return Math.max(min, Math.min(max, n));
@@ -18,46 +17,45 @@ export const handler: Handler = async (event) => {
     return cors.response(405, { error: "Method not allowed" });
   }
 
-  const key = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY || "";
-  if (!key) {
-    return cors.response(500, { error: "OPENAI_API_KEY not set" });
-  }
-
   try {
     const payload = event.body ? JSON.parse(event.body) : {};
-    const prompt: string = payload.prompt || "";
-    if (!prompt) return cors.response(400, { error: "Missing prompt" });
+    const userPrompt: string = payload.prompt || "";
+    if (!userPrompt) return cors.response(400, { error: "Missing prompt" });
 
-    const res = await fetch(OPENAI_URL, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${key}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4o",
-        temperature: 0.2,
-        messages: [
-          { role: "system", content: "You score clinical trial eligibility and fit. The score MUST be calculated as the SUM of these components: Condition match (0-40), Demographics (0-15), Exclusions (0-20), Medications (0-10), Location (0-10), Status (0-5). Review ALL patient conditions, medications, and allergies listed. Output ONLY JSON with integer score (0-100 = sum of components) and rationale (<=160 chars showing calculation)." },
-          { role: "user", content: prompt },
-        ],
-        response_format: { type: "json_object" },
-      }),
+    const vertexAI = new VertexAI({
+      project: process.env.GOOGLE_CLOUD_PROJECT || "trialcliniq",
+      location: process.env.VERTEX_AI_LOCATION || "us-central1",
     });
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return cors.response(res.status, { error: text || `HTTP ${res.status}` });
+    const generativeModel = vertexAI.getGenerativeModel({
+      model: process.env.VERTEX_AI_MODEL || "gemini-1.5-pro",
+    });
+
+    const systemInstruction =
+      "You score clinical trial eligibility and fit. The score MUST be calculated as the SUM of these components: Condition match (0-40), Demographics (0-15), Exclusions (0-20), Medications (0-10), Location (0-10), Status (0-5). Review ALL patient conditions, medications, and allergies listed. Output ONLY valid JSON with integer score (0-100 = sum of components) and rationale (<=160 chars showing calculation).";
+
+    const prompt = `${systemInstruction}\n\n${userPrompt}`;
+
+    let content: string;
+    try {
+      const result = await generativeModel.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
+      });
+      content = result.response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    } catch (apiErr: any) {
+      console.error("ai-scorer: Vertex AI API error:", apiErr);
+      return cors.response(500, { error: String(apiErr?.message || apiErr) });
     }
 
-    const data = await res.json();
-    const content: string | undefined = data?.choices?.[0]?.message?.content;
+    // Strip markdown code fences if present
+    const jsonText = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
     let out: any = {};
     try {
-      out = content ? JSON.parse(content) : {};
+      out = jsonText ? JSON.parse(jsonText) : {};
     } catch {
-      // GPT returned something we can't parse -- surface this instead of silently returning 0
-      console.error("ai-scorer: failed to parse GPT response:", content?.slice(0, 200));
+      // Model returned something we can't parse -- surface this instead of silently returning 0
+      console.error("ai-scorer: failed to parse Vertex AI response:", content?.slice(0, 200));
       return cors.response(502, { error: "Unparseable response from scoring model", raw: content?.slice(0, 300) });
     }
     if (typeof out.score === "undefined") {

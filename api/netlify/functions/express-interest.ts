@@ -2,6 +2,7 @@ import { Handler } from "@netlify/functions";
 import { query, logAuditEvent, initializeDatabase } from "./db";
 import { validateCsrfToken, getCsrfTokenFromHeaders } from "./csrf-utils";
 import { createCorsHandler } from "./cors-utils";
+import { verifyTokenAndGetUser } from "./auth-utils";
 
 interface RequestBody {
   nctId: string;
@@ -48,14 +49,23 @@ const handler: Handler = async (event, context) => {
       console.warn("Database init warning:", err instanceof Error ? err.message : String(err));
     }
 
-    // Get auth from headers
-    const userId = event.headers["x-user-id"];
+    // Get auth from verified session
+    let authUser;
+    try {
+      authUser = await verifyTokenAndGetUser(event);
+    } catch {
+      return cors.response(401, { ok: false, message: "Unauthorized" });
+    }
+    if (!authUser) {
+      return cors.response(401, { ok: false, message: "Unauthorized" });
+    }
+    const userId = authUser.userId;
     const patientId = event.headers["x-patient-id"];
 
     console.log("Auth check - userId:", !!userId, "patientId:", !!patientId);
 
-    if (!userId || !patientId) {
-      return cors.response(401, { ok: false, message: "Missing x-user-id or x-patient-id header" });
+    if (!patientId) {
+      return cors.response(401, { ok: false, message: "Missing x-patient-id header" });
     }
 
     // Parse request body

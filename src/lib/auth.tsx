@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-// Try Azure Entra ID (MSAL) first, fall back to simpleAuth session for email/password users
+// Try Firebase Auth first, fall back to simpleAuth session for email/password users
 import { getCurrentAuthUser as getMsalUser, signOutUser as msalSignOut, getAccessToken } from "./entraId";
 import { getCurrentAuthUser as getSimpleAuthUser, signOutUser as simpleSignOut } from "./simpleAuth";
 import { generatePatientId, clearAllPatientData } from "./patientIdUtils";
@@ -208,9 +208,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const loadAuth = async () => {
       try {
-        // Try MSAL (Azure) first, then simpleAuth (tries API then localStorage)
+        // Try Firebase Auth first, then simpleAuth (tries API then localStorage)
         let authUser: Awaited<ReturnType<typeof getMsalUser>> = null;
-        try { authUser = await getMsalUser(); } catch (_) { /* MSAL not configured, that's fine */ }
+        try { authUser = await getMsalUser(); } catch (_) { /* Firebase not ready, that's fine */ }
         if (!authUser) {
           try { authUser = await getSimpleAuthUser(); } catch (_) { /* simpleAuth failed too */ }
         }
@@ -309,5 +309,5 @@ export function RequireRole({ children, role, redirectTo }: { children: React.Re
   return <>{children}</>;
 }
 
-// Re-export so components can grab Azure JWT tokens for API calls
+// Re-export so components can grab Firebase ID tokens for API calls
 export { getAccessToken };

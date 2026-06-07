@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.handler = void 0;
 const db_1 = require("./db");
 const cors_utils_1 = require("./cors-utils");
+const auth_utils_1 = require("./auth-utils");
 const handler = async (event, context) => {
     const cors = (0, cors_utils_1.createCorsHandler)(event);
     console.log("=== Get Trial Interests Request ===");
@@ -25,12 +26,16 @@ const handler = async (event, context) => {
         catch (err) {
             console.warn("Database init warning:", err instanceof Error ? err.message : String(err));
         }
-        // Get auth from headers
-        const userId = event.headers["x-user-id"];
-        console.log("Auth check - userId:", !!userId);
-        if (!userId) {
-            return cors.response(401, { ok: false, message: "Missing x-user-id header" });
+        // Get auth from verified session
+        let userId;
+        try {
+            const authUser = await (0, auth_utils_1.verifyTokenAndGetUser)(event);
+            userId = authUser.userId;
         }
+        catch {
+            return cors.response(401, { ok: false, message: "Unauthorized" });
+        }
+        console.log("Auth check - userId:", !!userId);
         // Get NCT ID from query params
         const nctId = event.queryStringParameters?.nctId;
         console.log("Query params - nctId:", nctId);

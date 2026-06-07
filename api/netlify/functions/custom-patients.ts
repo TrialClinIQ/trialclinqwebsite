@@ -322,6 +322,15 @@ async function savePatients(userId: string, databaseId: string, patients: Custom
     return cors.response(400, { error: "Missing databaseId or patients array" });
   }
 
+  // Verify the authenticated user owns this database
+  const ownerCheck = await query(
+    `SELECT id FROM custom_patient_databases WHERE id = $1 AND user_id = $2`,
+    [databaseId, userId]
+  );
+  if (ownerCheck.rows.length === 0) {
+    return cors.response(403, { error: "Forbidden: you do not own this database" });
+  }
+
   // Batch insert patients
   for (const patient of patients) {
     await query(
@@ -440,6 +449,18 @@ async function getMatches(userId: string, nctId?: string) {
 async function saveMatches(userId: string, matches: CustomTrialMatch[]) {
   if (!matches || !Array.isArray(matches)) {
     return cors.response(400, { error: "Missing matches array" });
+  }
+
+  // Verify all referenced patients belong to the authenticated user
+  if (matches.length > 0) {
+    const patientIds = [...new Set(matches.map((m) => m.patientId))];
+    const ownerCheck = await query(
+      `SELECT id FROM custom_patients WHERE id = ANY($1) AND user_id != $2 LIMIT 1`,
+      [patientIds, userId]
+    );
+    if (ownerCheck.rows.length > 0) {
+      return cors.response(403, { error: "Forbidden: one or more patients do not belong to you" });
+    }
   }
 
   for (const match of matches) {

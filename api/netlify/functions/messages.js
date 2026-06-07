@@ -8,6 +8,7 @@ const db_1 = require("./db");
 const cors_utils_1 = require("./cors-utils");
 const csrf_utils_1 = require("./csrf-utils");
 const crypto_1 = __importDefault(require("crypto"));
+const auth_utils_1 = require("./auth-utils");
 function generateMessageId() {
     return "msg_" + Date.now().toString(36) + "_" + crypto_1.default.randomBytes(8).toString("hex");
 }
@@ -19,9 +20,13 @@ const handler = async (event) => {
     if (event.httpMethod === "OPTIONS") {
         return cors.handleOptions("GET,POST,PUT,OPTIONS");
     }
-    const userId = event.headers["x-user-id"];
-    if (!userId) {
-        return cors.response(401, { ok: false, error: "Missing x-user-id header" });
+    let userId;
+    try {
+        const authUser = await (0, auth_utils_1.verifyTokenAndGetUser)(event);
+        userId = authUser.userId;
+    }
+    catch (authErr) {
+        return cors.response(401, { ok: false, error: "Unauthorized" });
     }
     try {
         // GET - Fetch messages

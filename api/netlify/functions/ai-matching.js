@@ -2,7 +2,7 @@
 /**
  * AI-Powered Patient-Trial Matching Engine
  *
- * Uses OpenAI to intelligently match patients to clinical trials based on:
+ * Uses Vertex AI (Gemini) to intelligently match patients to clinical trials based on:
  * - Medical conditions (ICD-10 codes, descriptions)
  * - Medications (current treatments, contraindications)
  * - Allergies and sensitivities
@@ -20,8 +20,19 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.parseTrialEligibility = parseTrialEligibility;
 exports.matchPatientToTrial = matchPatientToTrial;
 exports.batchMatchPatientsToTrial = batchMatchPatientsToTrial;
-const OPENAI_URL = "https://api.openai.com/v1/chat/completions";
-const OPENAI_MODEL = process.env.OPENAI_MATCHING_MODEL || "gpt-4o";
+const { VertexAI } = require("@google-cloud/vertexai");
+function getGenerativeModel() {
+    const vertexAI = new VertexAI({
+        project: process.env.GOOGLE_CLOUD_PROJECT || "trialcliniq",
+        location: process.env.VERTEX_AI_LOCATION || "us-central1",
+    });
+    return vertexAI.getGenerativeModel({
+        model: process.env.VERTEX_AI_MODEL || "gemini-1.5-pro",
+    });
+}
+function stripJsonFences(text) {
+    return text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+}
 // ============================================================================
 // Main Matching Functions
 // ============================================================================
@@ -29,10 +40,6 @@ const OPENAI_MODEL = process.env.OPENAI_MATCHING_MODEL || "gpt-4o";
  * Parse trial eligibility criteria using AI to extract structured requirements
  */
 async function parseTrialEligibility(criteria) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-        throw new Error("OPENAI_API_KEY not configured");
-    }
     const prompt = `You are a clinical trial eligibility expert. Parse the following clinical trial criteria and extract structured requirements.
 
 Trial: ${criteria.title || criteria.nctId}
@@ -62,34 +69,16 @@ Extract and return a JSON object with:
 Types for criterion: "demographic", "condition", "medication", "lab", "procedure", "other"
 
 Be thorough and extract ALL requirements, even implicit ones. Return ONLY valid JSON.`;
-    const response = await fetch(OPENAI_URL, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-            model: OPENAI_MODEL,
-            temperature: 0.1,
-            messages: [
-                { role: "system", content: "You are a clinical trial eligibility parser. Output only valid JSON." },
-                { role: "user", content: prompt },
-            ],
-            response_format: { type: "json_object" },
-        }),
+    const model = getGenerativeModel();
+    const result = await model.generateContent({
+        contents: [{ role: "user", parts: [{ text: prompt }] }],
     });
-    if (!response.ok) {
-        const error = await response.text();
-        console.error("OpenAI eligibility parsing error:", error);
-        throw new Error(`Failed to parse eligibility: ${response.status}`);
-    }
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content;
+    const content = result.response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     if (!content) {
-        throw new Error("No response from OpenAI");
+        throw new Error("No response from Vertex AI");
     }
     try {
-        return JSON.parse(content);
+        return JSON.parse(stripJsonFences(content));
     }
     catch {
         console.error("Failed to parse eligibility JSON:", content);
@@ -109,10 +98,6 @@ Be thorough and extract ALL requirements, even implicit ones. Return ONLY valid 
  * Match a single patient against trial criteria using AI
  */
 async function matchPatientToTrial(patient, criteria, parsedEligibility) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-        throw new Error("OPENAI_API_KEY not configured");
-    }
     // First, do quick rule-based exclusions (age, gender)
     const quickExclusions = checkQuickExclusions(patient, criteria);
     if (quickExclusions.excluded) {
@@ -217,46 +202,31 @@ ANALYZE EVERY ENTRY in the patient's medical record:
 Be conservative - only mark as "highly_eligible" or "likely_eligible" if strong evidence supports it.
 Mark "ineligible" ONLY if clear exclusion criteria are met.
 List ALL missing information that would help refine the assessment.`;
-    const response = await fetch(OPENAI_URL, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-            model: OPENAI_MODEL,
-            temperature: 0.2,
-            messages: [
-                {
-                    role: "system",
-                    content: "You are an expert clinical trial matching AI. Analyze patient eligibility thoroughly and objectively. Output only valid JSON.",
-                },
-                { role: "user", content: prompt },
-            ],
-            response_format: { type: "json_object" },
-        }),
-    });
-    if (!response.ok) {
-        const error = await response.text();
-        console.error("OpenAI matching error:", error);
+    let content;
+    try {
+        const model = getGenerativeModel();
+        const result = await model.generateContent({
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+        });
+        content = result.response.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    } catch (apiErr) {
+        console.error("Vertex AI matching error:", apiErr);
         // Fall back to rule-based matching - CLEARLY FLAG THIS
         const fallback = ruleBasedMatching(patient, criteria);
         fallback._aiActuallyUsed = false;
         fallback._scoringMethod = 'rule-based-fallback';
-        fallback._devWarning = `AI_FAILED: OpenAI returned ${response.status} - ${error.slice(0, 100)}`;
+        fallback._devWarning = `AI_FAILED: Vertex AI error - ${String(apiErr?.message || apiErr).slice(0, 100)}`;
         return fallback;
     }
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content;
     if (!content) {
         const fallback = ruleBasedMatching(patient, criteria);
         fallback._aiActuallyUsed = false;
         fallback._scoringMethod = 'rule-based-fallback';
-        fallback._devWarning = 'AI_FAILED: No content in OpenAI response';
+        fallback._devWarning = 'AI_FAILED: No content in Vertex AI response';
         return fallback;
     }
     try {
-        const aiResult = JSON.parse(content);
+        const aiResult = JSON.parse(stripJsonFences(content));
         const result = {
             patientId: patient.id,
             patientName: `${patient.firstName} ${patient.lastName}`,
@@ -272,7 +242,7 @@ List ALL missing information that would help refine the assessment.`;
         };
         // CRITICAL: Flag that AI was actually used successfully
         result._aiActuallyUsed = true;
-        result._scoringMethod = 'gpt-4o';
+        result._scoringMethod = 'gemini-1.5-pro';
         return result;
     }
     catch {
@@ -512,7 +482,7 @@ function ruleBasedMatching(patient, criteria) {
     // CRITICAL FLAGS: This is NOT an AI result
     result._aiActuallyUsed = false;
     result._scoringMethod = 'rule-based';
-    result._devWarning = 'NOT_AI: This score was computed by rule-based fallback, NOT by GPT';
+    result._devWarning = 'NOT_AI: This score was computed by rule-based fallback, NOT by Gemini';
     return result;
 }
 function checkAgeMatch(patient, criteria) {

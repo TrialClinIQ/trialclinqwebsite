@@ -15,6 +15,7 @@ import type { Handler } from "@netlify/functions";
 import { query, logAuditEvent } from "./db";
 import { createCorsHandler } from "./cors-utils";
 import { validateCsrfToken, getCsrfTokenFromHeaders } from "./csrf-utils";
+import { verifyTokenAndGetUser } from "./auth-utils";
 
 // ============================================================================
 // Configuration
@@ -274,12 +275,17 @@ export const handler: Handler = async (event) => {
     console.error("Failed to ensure Elation tables:", err);
   }
 
-  const userId = event.headers["x-user-id"];
-  const providerId = event.headers["x-provider-id"] || userId;
-
-  if (!userId) {
-    return cors.response(401, { ok: false, error: "Missing x-user-id header" });
+  let authUser;
+  try {
+    authUser = await verifyTokenAndGetUser(event);
+  } catch {
+    return cors.response(401, { ok: false, error: "Unauthorized" });
   }
+  if (!authUser) {
+    return cors.response(401, { ok: false, error: "Unauthorized" });
+  }
+  const userId = authUser.userId;
+  const providerId = authUser.userId; // derived from verified session, not a spoofable header
 
   try {
     // ========================================================================
