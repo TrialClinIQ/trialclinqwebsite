@@ -6,7 +6,7 @@
 
 import { getCsrfToken } from "./csrf";
 
-const API_BASE = "/.netlify/functions/elation";
+const API_BASE = "/api/elation";
 
 // ============================================================================
 // Types

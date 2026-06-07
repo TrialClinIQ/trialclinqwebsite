@@ -164,7 +164,7 @@ export interface ElationConnectionStatus {
 // API Client Functions - Call backend endpoints
 // ============================================================================
 
-const API_BASE = "/.netlify/functions";
+const API_BASE = "/api";
 
 /**
  * Check if Elation is configured and connected

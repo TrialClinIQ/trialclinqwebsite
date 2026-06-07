@@ -5,7 +5,7 @@ export type MatchedVolunteer = {
 };
 
 const KEY_PREFIX = "provider:matches:v1:";
-const API_BASE = "/.netlify/functions/provider-matches";
+const API_BASE = "/api/provider-matches";
 
 function getStorageKey(userId: string): string {
   return `${KEY_PREFIX}${userId}`;
