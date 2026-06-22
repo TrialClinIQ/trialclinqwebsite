@@ -51,6 +51,7 @@ const appointmentsHandler  = require('../api/netlify/functions/appointments.js')
 const aiMatchingHandler    = require('../api/netlify/functions/ai-matching.js');
 const aiScorerHandler      = require('../api/netlify/functions/ai-scorer.js');
 const bookDemoHandler      = require('../api/netlify/functions/book-demo.js');
+const requestAccessHandler = require('../api/netlify/functions/request-access.js');
 const csrfTokenHandler     = require('../api/netlify/functions/csrf-token.js');
 const ctgovHandler         = require('../api/netlify/functions/ctgov.js');
 const customPatientsHandler= require('../api/netlify/functions/custom-patients.js');
@@ -87,7 +88,8 @@ mount(app, '/api/appointments/*', appointmentsHandler);
 
 mount(app, '/api/ai-matching', aiMatchingHandler);
 mount(app, '/api/ai-scorer',   aiScorerHandler);
-mount(app, '/api/book-demo',   bookDemoHandler);
+mount(app, '/api/book-demo',      bookDemoHandler);
+mount(app, '/api/request-access', requestAccessHandler);
 mount(app, '/api/csrf-token',  csrfTokenHandler);
 
 mount(app, '/api/ctgov',   ctgovHandler);

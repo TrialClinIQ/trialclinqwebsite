@@ -8,6 +8,7 @@ import { Badge } from "../components/ui/badge";
 import { Separator } from "../components/ui/separator";
 import { ChevronDownIcon, MapPinIcon } from "lucide-react";
 import HomeHeader from "../components/HomeHeader";
+import LocationAutocomplete from "../components/LocationAutocomplete";
 import { buildSmartCondQuery, buildLooseCondQuery, normalizeLocation } from "../lib/searchQuery";
 import { getSpellCheckSuggestions, correctWithAI, type SpellCheckSuggestion } from "../lib/spellCheck";
 import { expandSearchQuery } from "../lib/searchEngine";
@@ -515,12 +516,11 @@ export const SearchResults = (): JSX.Element => {
                 </div>
                 <div>
                   <h4 className="font-medium mb-2">Near</h4>
-                  <input
-                    type="text"
+                  <LocationAutocomplete
                     value={tempLoc}
-                    onChange={(e) => setTempLoc(e.target.value)}
+                    onChange={(raw) => setTempLoc(raw)}
                     placeholder="City, State"
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-600"
+                    className="w-full"
                   />
                 </div>
                 <div>

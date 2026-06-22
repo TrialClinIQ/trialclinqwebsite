@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Search, HelpCircle, Shield, UserPlus, LogIn, FileText, Megaphone, Layers, LifeBuoy } from "lucide-react";
+import { Search, HelpCircle, Shield, UserPlus, LogIn, FileText, Megaphone, Layers, LifeBuoy, Briefcase, BarChart3 } from "lucide-react";
 import HeaderActions from "./HeaderActions";
 
 export default function HomeHeader() {
   const [patientsOpen, setPatientsOpen] = useState(false);
   const [sitesOpen, setSitesOpen] = useState(false);
+  const [sponsorsOpen, setSponsorsOpen] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -15,6 +16,7 @@ export default function HomeHeader() {
       if (e.target instanceof Node && !containerRef.current.contains(e.target)) {
         setPatientsOpen(false);
         setSitesOpen(false);
+        setSponsorsOpen(false);
       }
     }
     document.addEventListener("click", onDocClick);
@@ -24,7 +26,7 @@ export default function HomeHeader() {
   return (
     <header className="sticky top-0 z-30 bg-white/80 backdrop-blur border-b">
       <div ref={containerRef} className="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between gap-4">
-        <Link to="/" className="flex items-center gap-2 shrink-0">
+        <a href="https://trialcliniq.com/" className="flex items-center gap-2 shrink-0">
           <img
             alt="TrialCliniq"
             className="h-8 w-auto"
@@ -33,7 +35,7 @@ export default function HomeHeader() {
             height="39"
             loading="eager"
           />
-        </Link>
+        </a>
         <nav className="hidden md:flex items-center gap-8 text-sm flex-1 min-w-0">
           <div className="relative group">
             <button
@@ -77,7 +79,7 @@ export default function HomeHeader() {
                       </Link>
                     </li>
                     <li>
-                      <Link to="/patients/volunteer" onClick={() => setPatientsOpen(false)} className="flex gap-4 p-4 rounded-xl hover:bg-gray-50">
+                      <Link to="/patients/signup-info" onClick={() => setPatientsOpen(false)} className="flex gap-4 p-4 rounded-xl hover:bg-gray-50">
                         <div className="shrink-0 rounded-lg bg-blue-50 p-2"><UserPlus className="h-5 w-5 text-blue-700" /></div>
                         <div>
                           <div className="font-medium">Become a clinical trial volunteer</div>
@@ -150,11 +152,11 @@ export default function HomeHeader() {
                       </Link>
                     </li>
                     <li>
-                      <Link to="/providers/create" onClick={() => setSitesOpen(false)} className="flex gap-4 p-4 rounded-xl hover:bg-gray-50">
+                      <Link to="/request-access?role=site" onClick={() => setSitesOpen(false)} className="flex gap-4 p-4 rounded-xl hover:bg-gray-50">
                         <div className="shrink-0 rounded-lg bg-blue-50 p-2"><UserPlus className="h-5 w-5 text-blue-700" /></div>
                         <div>
-                          <div className="font-medium">Create Provider Account</div>
-                          <div className="text-gray-600 text-sm">Create your investigator or site admin account to get started.</div>
+                          <div className="font-medium">Request Site Access</div>
+                          <div className="text-gray-600 text-sm">Request access for your investigator or site admin account to get started.</div>
                         </div>
                       </Link>
                     </li>
@@ -172,8 +174,46 @@ export default function HomeHeader() {
               </div>
             </div>
           </div>
-          <Link to="/contact" className="hover:text-gray-600">Contact Us</Link>
-          <Link to="/about" className="hover:text-gray-600">About Us</Link>
+          {/* Sponsors dropdown */}
+          <div className="relative group">
+            <button
+              className="hover:text-gray-600 inline-flex items-center gap-1"
+              aria-haspopup="menu"
+              aria-expanded={sponsorsOpen}
+              onClick={() => { setPatientsOpen(false); setSitesOpen(false); setSponsorsOpen((v) => !v); }}
+            >
+              Sponsors
+              <span className={`ml-1 text-gray-400 transition-transform ${sponsorsOpen ? "rotate-180" : "group-hover:rotate-180"}`}>▾</span>
+            </button>
+            <div className={`${sponsorsOpen ? "visible opacity-100" : "invisible opacity-0 group-hover:visible group-hover:opacity-100"} transition-opacity duration-150`}>
+              <div className="absolute left-0 top-full mt-3 w-[460px]">
+                <div className="rounded-2xl border bg-white p-3 shadow-xl ring-1 ring-black/5">
+                  <ul className="divide-y">
+                    <li>
+                      <Link to="/request-access?role=sponsor" onClick={() => setSponsorsOpen(false)} className="flex gap-4 p-4 rounded-xl hover:bg-gray-50">
+                        <div className="shrink-0 rounded-lg bg-violet-50 p-2"><Briefcase className="h-5 w-5 text-violet-700" /></div>
+                        <div>
+                          <div className="font-medium">Request Access — Sponsor</div>
+                          <div className="text-gray-600 text-sm">Pharma, biotech, and CRO teams — request access to the platform and schedule an intro call.</div>
+                        </div>
+                      </Link>
+                    </li>
+                    <li>
+                      <Link to="/book-demo" onClick={() => setSponsorsOpen(false)} className="flex gap-4 p-4 rounded-xl hover:bg-gray-50">
+                        <div className="shrink-0 rounded-lg bg-violet-50 p-2"><BarChart3 className="h-5 w-5 text-violet-700" /></div>
+                        <div>
+                          <div className="font-medium">Book a Demo</div>
+                          <div className="text-gray-600 text-sm">See the recruitment dashboard and enrollment metrics in action with a live walkthrough.</div>
+                        </div>
+                      </Link>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+          <a href="https://trialcliniq.com/contact" className="hover:text-gray-600">Contact Us</a>
+          <a href="https://trialcliniq.com/about" className="hover:text-gray-600">About Us</a>
         </nav>
         <div className="flex items-center gap-3 shrink-0">
           <HeaderActions />

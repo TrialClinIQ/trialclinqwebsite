@@ -7,7 +7,7 @@ import { ToastProvider, useToast } from "./lib/useToast";
 import { ToastContainer } from "./components/ui/toast";
 import { initializeCsrfProtection } from "./lib/csrf";
 import { useIdleTimeout } from "./lib/idleTimeout";
-import LandingPage from "./routes/LandingPage";
+import { Navigate } from "react-router-dom";
 import TeamPage from "./routes/TeamPage";
 import ContactPage from "./routes/ContactPage";
 import AuthCallback from "./routes/AuthCallback";
@@ -56,8 +56,12 @@ const Consent = lazy(() => import("./screens/patients/Consent"));
 const SignupProcessing = lazy(() => import("./screens/patients/SignupProcessing"));
 const Connect = lazy(() => import("./screens/patients/Connect"));
 const SignupInfo = lazy(() => import("./screens/patients/SignupInfo"));
-const SignupPersonalDetails = lazy(() => import("./screens/patients/SignupPersonalDetails"));
+const HealthExConnect = lazy(() => import("./screens/patients/HealthExConnect"));
+const HealthShareView = lazy(() => import("./screens/patients/HealthShareView"));
+const MFASetup = lazy(() => import("./screens/patients/MFASetup"));
 const About = lazy(() => import("./screens/About"));
+const SignupSelection = lazy(() => import("./screens/SignupSelection"));
+const RequestAccess = lazy(() => import("./screens/RequestAccess"));
 
 function LoadingFallback() {
   return (
@@ -113,11 +117,11 @@ function AppContent() {
         <Suspense fallback={<LoadingFallback />}>
           <div className="animate-fade-in">
           <Routes>
-            <Route path="/" element={<LandingPage />} />
+            <Route path="/" element={<Navigate to="/app" replace />} />
             <Route path="/team" element={<TeamPage />} />
             <Route path="/contact" element={<ContactPage />} />
             <Route path="/auth-callback" element={<AuthCallback />} />
-            <Route path="/app" element={<Home />} />
+            <Route path="/app" element={<Navigate to="/signup" replace />} />
             <Route path="/search-results" element={<SearchResults />} />
             <Route path="/patients/find-trial" element={<SearchResults />} />
             <Route path="/patients/faq" element={<Faq />} />
@@ -126,7 +130,9 @@ function AppContent() {
             <Route path="/patients/consent" element={<Consent />} />
             <Route path="/patients/connect" element={<Connect />} />
             <Route path="/patients/signup-info" element={<SignupInfo />} />
-            <Route path="/patients/signup-personal" element={<SignupPersonalDetails />} />
+            <Route path="/patients/signup-personal" element={<Navigate to="/patients/signup-info" replace />} />
+            <Route path="/patients/healthex" element={<HealthExConnect />} />
+            <Route path="/health-share" element={<HealthShareView />} />
             <Route path="/patients/ehr" element={<EhrDirectory />} />
             <Route path="/patients/ehr-callback" element={<EhrCallback />} />
             <Route path="/patients/check" element={<EligibilityCheck />} />
@@ -137,6 +143,7 @@ function AppContent() {
             <Route path="/sites/visibility" element={<VisibilityOptions />} />
             <Route path="/sites/multicenter" element={<MulticenterListings />} />
             <Route path="/support/investigators" element={<InvestigatorSupport />} />
+            <Route path="/signup" element={<SignupSelection />} />
             <Route path="/providers/create" element={<CreateAccount />} />
             <Route path="/providers/login" element={<ProviderLogin />} />
             <Route path="/providers/site-information" element={<SiteInformation />} />
@@ -155,11 +162,13 @@ function AppContent() {
             <Route path="/patients/eligible" element={<RequireRole role="patient" redirectTo="/patients/login"><EligibleTrials /></RequireRole>} />
             <Route path="/patients/health-profile" element={<RequireRole role="patient" redirectTo="/patients/login"><HealthProfile /></RequireRole>} />
             <Route path="/patients/settings" element={<RequireRole role="patient" redirectTo="/patients/login"><Settings /></RequireRole>} />
+            <Route path="/patients/mfa-setup" element={<RequireRole role="patient" redirectTo="/patients/login"><MFASetup /></RequireRole>} />
             <Route path="/patients/processing" element={<SignupProcessing />} />
             <Route path="/about" element={<About />} />
             <Route path="/trials/:slug" element={<TrialDetails />} />
             <Route path="/study/:nctId" element={<CtgovStudyDetails />} />
             <Route path="/book-demo" element={<BookDemo />} />
+            <Route path="/request-access" element={<RequestAccess />} />
           </Routes>
           </div>
         </Suspense>

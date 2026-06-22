@@ -2,7 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertCircle } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { signInUser } from '../lib/simpleAuth';
+import { signInUser } from '../lib/entraId';
 import { Modal } from './ui/modal';
 
 interface AuthModalProps {
@@ -22,7 +22,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, role = 'p
   const triggerButtonRef = useRef<HTMLElement>(null);
 
   const roleTitle = role === 'provider' ? 'Researcher' : 'Participant';
-  const signupPath = role === 'provider' ? '/providers/create' : '/patients/volunteer';
+  const signupPath = role === 'provider' ? '/request-access?role=site' : '/patients/signup-info';
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

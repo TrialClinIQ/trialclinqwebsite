@@ -20,6 +20,7 @@ import { uploadPatientFiles, getPatientFiles, savePatientProfile, saveEligibilit
 import { formatPhoneNumber, getPhoneValidationError } from "../../lib/phoneValidation";
 import { generatePatientId, isValidProfileForUser } from "../../lib/patientIdUtils";
 import { getEpicPatientData, clearAllEpicData } from "../../lib/tokenManager";
+import LocationAutocomplete from "../../components/LocationAutocomplete";
 
 // Field source tracking
 type FieldSource = {
@@ -1431,9 +1432,15 @@ function HealthProfileContent(): JSX.Element {
               <div>
                 <Section title="Travel Preferences">
                   <div className="grid grid-cols-1 gap-3 text-sm">
-                    <label className="text-gray-700">Home location (City, State or ZIP)
-                      <input value={travelLoc} onChange={(e)=>setTravelLoc(e.target.value)} className="mt-1 w-full rounded-md border px-3 py-2" placeholder="e.g. 10001 or Buffalo, NY" />
-                    </label>
+                    <div className="text-gray-700">
+                      <span>Home location (City, State or ZIP)</span>
+                      <LocationAutocomplete
+                        value={travelLoc}
+                        onChange={(raw) => setTravelLoc(raw)}
+                        placeholder="e.g. Buffalo, NY or 14201"
+                        className="mt-1"
+                      />
+                    </div>
                     <label className="text-gray-700">Travel radius
                       <select value={travelRadius} onChange={(e)=>setTravelRadius(e.target.value)} className="mt-1 w-full rounded-md border px-3 py-2 bg-white">
                         {["25mi","50mi","100mi","200mi","300mi","500mi","1000mi"].map(r => <option key={r} value={r}>{r}</option>)}

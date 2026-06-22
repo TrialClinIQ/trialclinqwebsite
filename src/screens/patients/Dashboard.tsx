@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowRight, CheckCircle2, Zap, QrCode } from "lucide-react";
+import HealthShareModal from "../../components/HealthShareModal";
 import { getRealMatchedTrialsForCurrentUser, type LiteTrial } from "../../lib/matching";
 import PatientHeader from "../../components/PatientHeader";
 import { useAuth } from "../../lib/auth";
@@ -10,10 +12,17 @@ import { TrialTableSkeleton } from "../../components/skeletons";
 import { uploadPatientFiles } from "../../lib/storage";
 import { generatePatientId } from "../../lib/patientIdUtils";
 
+const HEALTHEX_STATUS_KEY = "tc_healthex_status";
+
 export default function Dashboard(): JSX.Element {
   const { user } = useAuth();
   const { toast } = useToast();
+  const navigate = useNavigate();
   const name = user ? `${user.firstName} ${user.lastName}` : "";
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [healthexConnected, setHealthexConnected] = useState(
+    () => localStorage.getItem(HEALTHEX_STATUS_KEY) === "connected"
+  );
   const [progress, setProgress] = useState(() => computeProfileCompletion());
   const [items, setItems] = useState<LiteTrial[]>([]);
   const [fallbackItems, setFallbackItems] = useState<LiteTrial[]>([]);
@@ -79,6 +88,36 @@ export default function Dashboard(): JSX.Element {
 
       <main className="max-w-6xl mx-auto px-4 py-8">
         <h1 className="text-2xl sm:text-3xl font-semibold">Welcome back, {name}</h1>
+
+        {/* HealthEx onboarding banner — shown until records are connected */}
+        {!healthexConnected && (
+          <div className="mt-6 rounded-2xl bg-gradient-to-r from-blue-600 to-blue-700 p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-xl bg-white/20 flex items-center justify-center shrink-0">
+                <Zap className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <div className="text-white font-semibold text-sm mb-0.5">Step 2 — Connect your health records</div>
+                <p className="text-blue-100 text-sm max-w-lg">
+                  Link your records via <strong className="text-white">HealthEx</strong> so our AI can match you to trials — no forms to fill in. Takes about 60 seconds.
+                </p>
+                <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                  {["Medical history", "Medications", "Lab results"].map((item) => (
+                    <li key={item} className="flex items-center gap-1 text-xs text-blue-100">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-blue-300" /> {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <button
+              onClick={() => navigate("/patients/healthex")}
+              className="inline-flex items-center gap-2 shrink-0 rounded-full bg-white text-blue-700 font-semibold px-5 py-2.5 text-sm hover:bg-blue-50 transition-colors"
+            >
+              Connect Now <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Top cards */}
         <div className="mt-6 grid md:grid-cols-3 gap-4">
@@ -161,6 +200,35 @@ export default function Dashboard(): JSX.Element {
             </button>
           </div>
 
+          {/* Share with care team */}
+          <div className="rounded-xl border bg-white p-4">
+            <div className="text-sm font-medium">Share with Care Team</div>
+            <p className="mt-2 text-sm text-gray-600">
+              Generate a QR code your doctor or care team can scan to instantly access your health summary — no clipboard needed.
+            </p>
+            <div className="mt-1 text-xs text-gray-400">CMS Interoperability Initiative</div>
+            <button
+              onClick={() => setShareModalOpen(true)}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-gray-900 text-white px-3 py-2 text-sm hover:bg-black"
+            >
+              <QrCode className="w-4 h-4" /> Generate QR Code
+            </button>
+          </div>
+
+          {/* Two-factor authentication */}
+          <div className="rounded-xl border bg-white p-4">
+            <div className="text-sm font-medium">Two-Factor Authentication</div>
+            <p className="mt-2 text-sm text-gray-600">
+              Protect your account with a second layer of security using an authenticator app or SMS.
+            </p>
+            <Link
+              to="/patients/mfa-setup"
+              className="mt-4 inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm hover:bg-gray-50"
+            >
+              Manage 2FA
+            </Link>
+          </div>
+
           <div className="rounded-xl border bg-white p-4">
             <div className="flex items-start justify-between">
               <div>
@@ -174,14 +242,40 @@ export default function Dashboard(): JSX.Element {
             <div className="mt-2 text-xs text-gray-500">Last updated: {new Date().toLocaleDateString()}</div>
           </div>
 
-          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
-            <div className="text-sm font-medium text-blue-900">Connect Your EHR</div>
-            <p className="mt-2 text-sm text-blue-700">
-              Securely import your electronic health records from your hospital or clinic to improve trial matching
-            </p>
-            <Link to="/patients/ehr" className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 text-white px-3 py-2 text-sm hover:bg-blue-700">
-              Connect Now
-            </Link>
+          <div
+            className={`rounded-xl border p-4 ${healthexConnected ? "border-emerald-200 bg-emerald-50" : "border-blue-200 bg-blue-50"}`}
+          >
+            <div className={`text-sm font-medium ${healthexConnected ? "text-emerald-900" : "text-blue-900"}`}>
+              HealthEx Records
+            </div>
+            {healthexConnected ? (
+              <>
+                <p className="mt-2 text-sm text-emerald-700">
+                  Your health records are connected. Our AI is using them to match you to trials.
+                </p>
+                <div className="mt-3 flex items-center gap-2 text-xs text-emerald-700 font-medium">
+                  <CheckCircle2 className="w-4 h-4" /> Connected via HealthEx
+                </div>
+                <button
+                  onClick={() => navigate("/patients/healthex")}
+                  className="mt-3 inline-flex items-center gap-1 rounded-lg border border-emerald-300 px-3 py-1.5 text-xs text-emerald-800 hover:bg-emerald-100"
+                >
+                  Manage connection
+                </button>
+              </>
+            ) : (
+              <>
+                <p className="mt-2 text-sm text-blue-700">
+                  Connect your records via HealthEx to unlock AI-powered trial matching.
+                </p>
+                <button
+                  onClick={() => navigate("/patients/healthex")}
+                  className="mt-4 inline-flex items-center gap-2 rounded-lg bg-blue-600 text-white px-3 py-2 text-sm hover:bg-blue-700"
+                >
+                  Connect Now
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -330,6 +424,8 @@ export default function Dashboard(): JSX.Element {
           )}
         </section>
       </main>
+
+      {shareModalOpen && <HealthShareModal onClose={() => setShareModalOpen(false)} />}
 
       <Modal
         isOpen={whyOpen}

@@ -115,7 +115,7 @@ export default function EligibilityResult(): JSX.Element {
           <div className="font-medium">Ready to connect with the trial center and learn about next steps?</div>
           <p className="text-sm text-white/90 mt-1">Create a free TrialCliniq account to securely send your eligibility report, contact the study coordinator, and get matched to other future studies you may qualify for.</p>
           <div className="mt-4 text-center">
-            <button onClick={() => navigate("/patients/volunteer")} className="inline-flex items-center justify-center rounded-full bg-white text-gray-900 px-5 py-2 text-sm font-medium hover:bg-gray-100">Continue to Sign Up</button>
+            <button onClick={() => navigate("/patients/signup-info")} className="inline-flex items-center justify-center rounded-full bg-white text-gray-900 px-5 py-2 text-sm font-medium hover:bg-gray-100">Continue to Sign Up</button>
           </div>
         </div>
 

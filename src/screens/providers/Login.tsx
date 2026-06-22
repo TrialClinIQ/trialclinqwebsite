@@ -102,7 +102,7 @@ export default function ProviderLogin(): JSX.Element {
             {isLoading ? "Signing in..." : "Sign In"}
           </button>
         </form>
-        <p className="text-sm text-gray-600 mt-4">New to TrialCliniq? <Link to="/providers/create" className="text-blue-600 hover:underline">Create an account</Link></p>
+        <p className="text-sm text-gray-600 mt-4">New to TrialCliniq? <Link to="/request-access?role=site" className="text-blue-600 hover:underline">Request access</Link></p>
       </main>
     </div>
   );

@@ -257,7 +257,7 @@ export default function CtgovStudyDetails(): JSX.Element {
                           <ScoreRing value={aiScore ?? 0} />
                         </div>
                         <button
-                          onClick={() => navigate("/patients/volunteer")}
+                          onClick={() => navigate("/patients/signup-info")}
                           className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-blue-500/10 to-blue-600/20 hover:from-blue-500/20 hover:to-blue-600/30 rounded-lg transition-all text-blue-700 font-semibold text-xs px-3 py-2"
                         >
                           Unlock Score

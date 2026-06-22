@@ -137,6 +137,10 @@
   animation: fade-in 1s var(--animation-delay, 0s) ease forwards;
 }
 
+body {
+  font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
 .animate-fade-up {
   animation: fade-up 1s var(--animation-delay, 0s) ease forwards;
 }
@@ -242,7 +246,7 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
+    --background: 212 60% 96%;
     --foreground: 222.2 47.4% 11.2%;
 
     --muted: 210 40% 96.1%;

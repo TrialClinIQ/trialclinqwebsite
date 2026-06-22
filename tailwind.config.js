@@ -7,6 +7,19 @@ module.exports = {
   theme: {
     extend: {
       colors: {
+        blue: {
+          50: '#EEF4FB',
+          100: '#D5E3F3',
+          200: '#AABFDF',
+          300: '#7A9DCF',
+          400: '#4D7BBD',
+          500: '#2059A9',
+          600: '#0D3A72',
+          700: '#092D5C',
+          800: '#061E40',
+          900: '#030F20',
+          950: '#010812',
+        },
         "error-700": "var(--error-700)",
         fillicon: "var(--fillicon)",
         "gray-100": "var(--gray-100)",
@@ -71,6 +84,7 @@ module.exports = {
         "text-xs-medium": "var(--text-xs-medium-font-family)",
         "text-xs-regular": "var(--text-xs-regular-font-family)",
         sans: [
+          '"Instrument Sans"',
           "ui-sans-serif",
           "system-ui",
           "sans-serif",

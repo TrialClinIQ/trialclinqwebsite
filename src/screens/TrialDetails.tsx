@@ -98,7 +98,7 @@ export default function TrialDetails(): JSX.Element {
             <span>{trial.aiScore}% TrialCliniq AI Score</span>
           ) : (
             <button
-              onClick={() => navigate("/patients/volunteer")}
+              onClick={() => navigate("/patients/signup-info")}
               className="text-blue-600 hover:underline font-medium"
             >
               See Matching Score
