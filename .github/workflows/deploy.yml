@@ -84,6 +84,14 @@ jobs:
           region: ${{ env.REGION }}
           image: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.SERVICE }}:${{ github.sha }}"
           flags: "--allow-unauthenticated"
+          env_vars: |
+            NODE_ENV=production
+            GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}
+            CSRF_SECRET=${{ secrets.CSRF_SECRET }}
+            RESEND_API_KEY=${{ secrets.RESEND_API_KEY }}
+            GCS_BUCKET_NAME=${{ secrets.GCS_BUCKET_NAME }}
+            VERTEX_AI_LOCATION=us-central1
+            VERTEX_AI_MODEL=gemini-2.0-flash-001
 
       - name: Cloud Run URL
         run: echo "Deployed to ${{ steps.deploy.outputs.url }}"
